@@ -1,0 +1,26 @@
+{
+  "rules": [
+    {
+      "material": "birch plywood",
+      "tool": "diode laser",
+      "mode": "laser",
+      "max_feed_mm_min": 1200.0,
+      "max_power_s": 850,
+      "notes": "Conservative starter limit for diode laser engraving/cutting tests."
+    },
+    {
+      "material": "fr4 copper clad",
+      "tool": "0.2mm v-bit",
+      "mode": "pcb",
+      "max_feed_mm_min": 180.0,
+      "notes": "Starter isolation routing feed; tune after test coupons."
+    },
+    {
+      "material": "aluminum",
+      "tool": "1/8in end mill",
+      "mode": "cnc",
+      "max_feed_mm_min": 300.0,
+      "notes": "Conservative placeholder until machine-specific chipload testing is complete."
+    }
+  ]
+}

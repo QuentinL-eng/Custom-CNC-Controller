@@ -1,0 +1,16 @@
+{
+  "machines": [
+    {
+      "name": "Genmitsu Cubiko",
+      "work_area_mm": [100.0, 100.0, 40.0],
+      "probe_thickness_mm": 15.0,
+      "max_feed_mm_min": 2000.0,
+      "laser_s_min": 0,
+      "laser_s_max": 1000,
+      "safe_z_mm": 5.0,
+      "homing_required": true,
+      "serial_port": "/dev/ttyUSB0",
+      "baud_rate": 115200
+    }
+  ]
+}

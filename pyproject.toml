@@ -1,0 +1,15 @@
+[project]
+name = "custom-cnc-controller"
+version = "0.1.0"
+description = "Touchscreen CNC and laser controller shell for GRBL machines."
+requires-python = ">=3.10"
+dependencies = [
+  "pyserial>=3.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
