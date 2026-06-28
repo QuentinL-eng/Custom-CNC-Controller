@@ -65,6 +65,12 @@ fi
 
 mkdir -p "$target_dir"
 rsync --archive --delete --exclude README.md "$source_dir/" "$target_dir/"
+# The portfolio Nginx config caches JS and CSS for 30 days. Give each deployed
+# commit a distinct asset URL so a successful pull is immediately visible.
+sed -i \
+    -e "s|./styles.css|./styles.css?v=$commit|" \
+    -e "s|./app.js|./app.js?v=$commit|" \
+    "$target_dir/index.html"
 
 if [ -f "$repo/scripts/xu4-web-sync" ]; then
     mkdir -p /home/quentin/.local/bin
