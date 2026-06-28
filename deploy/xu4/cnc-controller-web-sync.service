@@ -1,0 +1,20 @@
+[Unit]
+Description=Update the Quentin Engineering CNC controller test page
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=quentin
+Group=quentin
+ExecStart=/home/quentin/.local/bin/xu4-web-sync
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/quentin/Custom-CNC-Controller
+ReadWritePaths=/home/quentin/Quentin-Portfolio/project/CNC-Controller_Test
+ReadWritePaths=/home/quentin/.local/bin
+ReadWritePaths=/home/quentin/.local/state/cnc-controller-web
+

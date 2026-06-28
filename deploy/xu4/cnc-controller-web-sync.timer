@@ -1,0 +1,12 @@
+[Unit]
+Description=Check GitHub for CNC controller test-page updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+Persistent=true
+Unit=cnc-controller-web-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -15,7 +15,8 @@ must remain together.
 
 ## XU4 deployment
 
-The production XU4 runs `scripts/xu4-web-sync` every five minutes. The script:
+The production XU4 runs `scripts/xu4-web-sync` every five minutes through
+`deploy/xu4/cnc-controller-web-sync.timer`. The script:
 
 1. Fast-forwards a clean checkout of this repository.
 2. Synchronizes only this directory into
