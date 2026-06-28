@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#15191d">
+  <title>CNC Controller Test | Quentin Engineering</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="test-header">
+    <div>
+      <p class="eyebrow">QUENTIN ENGINEERING</p>
+      <h1>CNC Controller Test Bench</h1>
+    </div>
+    <div class="test-meta">
+      <span class="live-dot"></span>
+      Browser simulation
+      <span class="build" id="buildLabel">build local</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="emulator" aria-label="CNC controller emulator">
+      <div class="display-bezel">
+        <div class="display-window" id="displayWindow">
+          <div class="hmi" id="hmi">
+            <header class="status-bar">
+              <span class="mode-badge laser" id="modeBadge">LASER</span>
+              <span class="machine-state"><i id="stateDot"></i><strong id="machineState">Idle</strong></span>
+              <span class="divider"></span>
+              <span class="connection" id="connectionLabel">GRBL · Simulated</span>
+              <span class="loaded-job" id="loadedJob">No file loaded</span>
+              <span class="status-spacer"></span>
+              <span class="units"><b>mm</b><span>in</span></span>
+              <time id="clock">--:--</time>
+            </header>
+
+            <div class="hmi-body">
+              <div class="screen-stack" id="screenStack">
+                <section class="screen active" data-screen="home">
+                  <div class="home-layout">
+                    <div class="mode-grid">
+                      <button class="tile mode-tile cnc-tile" data-nav="placeholder">
+                        <i></i><span><strong>CNC Routing</strong><small>Mill · route · drill</small></span>
+                      </button>
+                      <button class="tile mode-tile laser-tile" data-nav="laser">
+                        <i></i><span><strong>Laser</strong><small>Engrave · cut</small></span>
+                      </button>
+                      <button class="tile mode-tile pcb-tile" data-nav="placeholder">
+                        <i></i><span><strong>PCB Wizard</strong><small>Gerber → toolpaths</small></span>
+                      </button>
+                      <button class="tile small-tile" data-nav="files"><strong>Files</strong><small>USB · SD · internal</small></button>
+                      <button class="tile small-tile" data-nav="placeholder"><strong>Probing</strong><small>Z · XYZ · edge</small></button>
+                      <button class="tile small-tile" data-nav="placeholder"><strong>Machine Setup</strong><small>Home · offsets</small></button>
+                      <button class="tile small-tile" data-nav="placeholder"><strong>Materials</strong><small>Feeds · speeds</small></button>
+                      <button class="tile small-tile" data-nav="placeholder"><strong>Diagnostics</strong><small>GRBL · console</small></button>
+                      <button class="tile small-tile" data-nav="settings"><strong>Settings</strong><small>Network · updates</small></button>
+                    </div>
+                    <aside class="home-side">
+                      <article class="card machine-card">
+                        <p class="section-label">MACHINE</p>
+                        <div class="notice"><b>!</b><span><strong>Simulation ready</strong><small>No machine connected</small></span></div>
+                        <button class="primary wide">Home All Axes</button>
+                        <dl><div><dt>Position</dt><dd>X 0 · Y 0 · Z 0</dd></div><div><dt>Laser</dt><dd>Off</dd></div><div><dt>WCS</dt><dd>G54</dd></div></dl>
+                      </article>
+                      <article class="card recent-card">
+                        <p class="section-label">RECENT JOBS</p>
+                        <div class="recent"><i class="blue"></i><span><strong>logo_engrave.svg</strong><small>Laser · 8 min · yesterday</small></span></div>
+                        <div class="recent"><i class="green"></i><span><strong>coaster_set.svg</strong><small>Laser · 14 min · Friday</small></span></div>
+                      </article>
+                    </aside>
+                  </div>
+                </section>
+
+                <section class="screen" data-screen="laser">
+                  <div class="laser-summary">
+                    <strong id="laserFile">No file loaded</strong>
+                    <span id="operationSummary">No operation</span>
+                    <span class="safety-badge" id="safetyBadge">NOT REVIEWED</span>
+                  </div>
+                  <nav class="laser-tabs" aria-label="Laser workflow">
+                    <button class="active" data-laser-page="setup">Setup</button>
+                    <button data-laser-page="layers">Layers</button>
+                    <button data-laser-page="preview">Preview</button>
+                    <button data-laser-page="run">Run</button>
+                    <button data-laser-page="console">Console</button>
+                  </nav>
+                  <div class="laser-pages">
+                    <div class="laser-page active" data-laser="setup">
+                      <article class="card setup-file">
+                        <p class="section-label">FILE IMPORT</p>
+                        <div><strong id="setupFilename">SVG · DXF · PNG · JPG · G-code</strong><p>Internal · USB · SD · future network storage</p></div>
+                        <label class="primary file-picker">Load File<input id="fileInput" type="file" accept=".svg,.dxf,.pdf,.png,.jpg,.jpeg,.bmp,.gcode,.gc,.nc,.tap"></label>
+                      </article>
+                      <article class="card setup-material">
+                        <p class="section-label">MATERIAL PRESET</p>
+                        <h2 id="materialName">Unspecified</h2>
+                        <p>Apply recommended speed, power, passes, and operation.</p>
+                        <button class="secondary preset" data-material="3 mm Birch" data-speed="1200" data-power="85" data-passes="1">Birch · 3 mm · Cut</button>
+                        <button class="secondary preset" data-material="3 mm Acrylic" data-speed="800" data-power="90" data-passes="2">Acrylic · 3 mm · Cut</button>
+                        <button class="secondary preset" data-material="Anodized Aluminum" data-speed="3000" data-power="25" data-passes="1">Aluminum · Mark</button>
+                      </article>
+                      <article class="card setup-origin">
+                        <p class="section-label">ORIGIN</p><h2 id="originName">Front-left</h2>
+                        <button class="secondary origin active">Front-left</button>
+                        <button class="secondary origin">Center</button>
+                        <button class="secondary origin">Current position</button>
+                      </article>
+                    </div>
+
+                    <div class="laser-page" data-laser="layers">
+                      <div class="layer-list" id="layerList">
+                        <article class="card layer-card">
+                          <div class="layer-head"><i class="layer-color blue"></i><strong>Primary artwork</strong><button class="small-control enabled">ON</button></div>
+                          <div class="layer-controls"><button>Cut</button><button>Speed <b id="layerSpeed">1200</b></button><button>Power <b id="layerPower">85%</b></button><button>Passes <b id="layerPasses">1</b></button></div>
+                        </article>
+                        <article class="card layer-card">
+                          <div class="layer-head"><i class="layer-color green"></i><strong>Detail lines</strong><button class="small-control enabled">ON</button></div>
+                          <div class="layer-controls"><button>Line engrave</button><button>Speed <b>2400</b></button><button>Power <b>35%</b></button><button>Passes <b>1</b></button></div>
+                        </article>
+                      </div>
+                    </div>
+
+                    <div class="laser-page" data-laser="preview">
+                      <article class="card preview-card">
+                        <div class="preview-head"><span><b>JOB PREVIEW</b><small id="previewBounds">Bounds 180 × 120 mm</small></span></div>
+                        <div class="preview-canvas"><div class="job-bounds"><span>simulated toolpath</span></div></div>
+                      </article>
+                      <aside class="preview-actions">
+                        <article class="card summary-list">
+                          <dl>
+                            <div><dt>Runtime</dt><dd>08:42</dd></div>
+                            <div><dt>Material</dt><dd id="previewMaterial">Unspecified</dd></div>
+                            <div><dt>Speed</dt><dd id="previewSpeed">1200 mm/min</dd></div>
+                            <div><dt>Power</dt><dd id="previewPower">85%</dd></div>
+                            <div><dt>Passes</dt><dd id="previewPasses">1</dd></div>
+                          </dl>
+                        </article>
+                        <div class="warning-box"><b>!</b><span><strong>Simulation</strong><small>Review is safe; no commands will be sent.</small></span></div>
+                        <button class="secondary">Frame</button>
+                        <button class="secondary" id="generateButton">Generate G-code</button>
+                        <button class="primary" id="reviewButton">Safety Review</button>
+                      </aside>
+                    </div>
+
+                    <div class="laser-page" data-laser="run">
+                      <article class="card run-card">
+                        <p class="section-label">JOB STATE</p>
+                        <strong class="run-state" id="runState">IDLE</strong>
+                        <div class="progress-track"><i id="runProgress"></i></div>
+                        <p class="line-progress" id="lineProgress">Line 0 / 2980</p>
+                        <div class="timing"><span id="elapsed">Elapsed 00:00</span><span id="remaining">Remaining —</span></div>
+                      </article>
+                      <div class="run-controls">
+                        <button class="primary run-start" id="startJob">Start</button>
+                        <button class="warning" id="pauseJob">Pause / Hold</button>
+                        <button class="primary" id="resumeJob">Resume</button>
+                        <button class="danger run-stop" id="stopJob">Stop / Reset</button>
+                        <div class="override">Feed 100% · Rapid 100% · Power 100%</div>
+                      </div>
+                    </div>
+
+                    <div class="laser-page" data-laser="console">
+                      <div class="console-head"><strong>GRBL simulated · laser mode $32=1</strong><button class="secondary">Read $$</button><button class="secondary" id="clearConsole">Clear</button></div>
+                      <pre id="consoleOutput">&gt; Connected to Mock GRBL 1.1h
+ok
+&gt; $32
+$32=1
+ok</pre>
+                      <div class="console-input"><input id="consoleCommand" placeholder="Raw GRBL command"><button class="primary" id="sendConsole">Send</button></div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="screen" data-screen="files">
+                  <div class="simple-screen">
+                    <div class="screen-title"><p class="section-label">FILE IMPORT</p><h2>Choose a source</h2><p>Browser storage emulates internal, USB, and SD media.</p></div>
+                    <div class="source-grid">
+                      <button class="tile"><strong>Internal</strong><small>Controller storage</small></button>
+                      <button class="tile"><strong>USB Drive</strong><small>Removable media</small></button>
+                      <button class="tile"><strong>SD Card</strong><small>Local card</small></button>
+                      <button class="tile"><strong>Network</strong><small>Future storage</small></button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="screen" data-screen="settings">
+                  <div class="settings-layout">
+                    <nav class="settings-nav">
+                      <button class="active" data-setting="display">Display</button>
+                      <button data-setting="network">Network</button>
+                      <button data-setting="updates">Updates</button>
+                      <button data-setting="diagnostics">Diagnostics</button>
+                    </nav>
+                    <div class="settings-content">
+                      <div class="setting-panel active" data-panel="display">
+                        <p class="section-label">DISPLAY</p>
+                        <div class="setting-row"><span><strong>Theme</strong><small>High-brightness shop display</small></span><b>Light</b></div>
+                        <div class="setting-row"><span><strong>Motion</strong><small>30 FPS · Raspberry Pi 3B profile</small></span><div class="segmented"><button class="active">Standard</button><button>Reduced</button><button>Off</button></div></div>
+                        <button class="secondary wide sleep-button">Sleep Display</button>
+                      </div>
+                      <div class="setting-panel" data-panel="network">
+                        <p class="section-label">NETWORK</p>
+                        <article class="card network-card">
+                          <h3>quentinpi · SSH ready</h3>
+                          <p>Ethernet <b>10.168.168.41</b></p><p>Wi-Fi <b>10.168.168.222</b></p>
+                          <code>ssh quentin@quentinpi</code>
+                        </article>
+                        <div class="wifi-form"><input class="keyboard-input" placeholder="Wi-Fi network name"><input class="keyboard-input" type="password" placeholder="Wi-Fi password"><button class="primary">Connect</button></div>
+                        <div class="wifi-list"><button class="secondary">Shop Network · 92% · Secured</button><button class="secondary">Guest · 61% · Open</button></div>
+                      </div>
+                      <div class="setting-panel" data-panel="updates">
+                        <p class="section-label">UPDATES</p>
+                        <article class="card update-card"><div><small>SUCCESSFUL PULLS</small><strong>12</strong></div><dl><div><dt>Last pull</dt><dd>Today · 14:28</dd></div><div><dt>Last check</dt><dd>Just now</dd></div><div><dt>Commit</dt><dd>dec549d</dd></div></dl></article>
+                        <div class="success-message">Controller is current with GitHub.</div>
+                        <button class="primary wide">Check GitHub Now</button>
+                      </div>
+                      <div class="setting-panel" data-panel="diagnostics"><p class="section-label">DIAGNOSTICS</p><article class="card diagnostics"><h3>Mock controller online</h3><p>GRBL state: Idle</p><p>Limit switches: clear</p><p>Probe: open</p><p>Laser mode: $32=1</p></article></div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="screen" data-screen="placeholder">
+                  <div class="placeholder"><strong>Not included in this test build</strong><p>This emulator currently focuses on the laser workflow and shared controller interface.</p></div>
+                </section>
+              </div>
+
+              <aside class="action-rail">
+                <button data-rail="home"><span>⌂</span><small>HOME</small></button>
+                <button data-rail="back"><span>‹</span><small>BACK</small></button>
+                <button data-rail="context"><span>◎</span><small>CONTEXT</small></button>
+                <div class="rail-spacer"></div>
+                <div class="encoder-hint"><small>ENC 1</small><strong id="encoderAction">NAVIGATE</strong><span>menu</span></div>
+                <div class="encoder-hint blue-hint"><small>ENC 2</small><strong>—</strong><span>simulated</span></div>
+              </aside>
+            </div>
+
+            <div class="touch-keyboard" id="touchKeyboard" aria-hidden="true">
+              <div class="keyboard-title"><span id="keyboardTitle">Keyboard</span><button id="hideKeyboard">Hide</button></div>
+              <div class="keyboard-keys" id="keyboardKeys"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section class="physical-panel" aria-label="Simulated physical controller inputs">
+        <div class="panel-label"><span>PHYSICAL INPUT PANEL</span><small>Visual feedback only · no controller actions are dispatched</small></div>
+        <div class="physical-buttons">
+          <button class="hardware-button start"><i></i><strong>Cycle Start</strong><small>INPUT 1</small></button>
+          <button class="hardware-button hold"><i></i><strong>Feed Hold</strong><small>INPUT 2</small></button>
+          <button class="hardware-button reset"><i></i><strong>Reset</strong><small>INPUT 3</small></button>
+          <button class="hardware-button"><i></i><strong>Probe</strong><small>INPUT 4</small></button>
+          <button class="hardware-button"><i></i><strong>Context</strong><small>INPUT 5</small></button>
+          <button class="hardware-button"><i></i><strong>Frame</strong><small>INPUT 6</small></button>
+          <button class="hardware-button"><i></i><strong>Home</strong><small>INPUT 7</small></button>
+          <button class="hardware-button"><i></i><strong>Back</strong><small>INPUT 8</small></button>
+        </div>
+        <div class="encoder-panel">
+          <div class="encoder-knob" id="encoderKnob"><span></span></div>
+          <strong>Rotary Encoder</strong>
+          <small>Rotate / press · unassigned</small>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer>Testing surface only · No machine commands are transmitted.</footer>
+  <script src="./app.js"></script>
+</body>
+</html>
