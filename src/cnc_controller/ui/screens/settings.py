@@ -53,6 +53,7 @@ class NetworkTask(QThread):
         action: str,
         ssid: str = "",
         password: str = "",
+        security: str = "",
         parent=None,
     ):
         super().__init__(parent)
@@ -60,6 +61,7 @@ class NetworkTask(QThread):
         self._action = action
         self._ssid = ssid
         self._password = password
+        self._security = security
 
     def run(self) -> None:
         try:
@@ -69,7 +71,7 @@ class NetworkTask(QThread):
                 result = self._manager.scan_wifi()
             else:
                 result = self._manager.connect_wifi(
-                    self._ssid, self._password
+                    self._ssid, self._password, self._security
                 )
             self.completed.emit(result)
         except Exception as exc:
@@ -345,11 +347,17 @@ class SettingsScreen(QWidget):
                     "font-size:15px;font-weight:600;text-align:left;padding-left:14px}"
                 )
 
-    def _start_network_task(self, action: str, ssid: str = "", password: str = ""):
+    def _start_network_task(
+        self,
+        action: str,
+        ssid: str = "",
+        password: str = "",
+        security: str = "",
+    ):
         if self._network_task and self._network_task.isRunning():
             return
         self._network_task = NetworkTask(
-            self._network, action, ssid, password, self
+            self._network, action, ssid, password, security, self
         )
         self._network_task.failed.connect(self._network_failed)
         if action == "scan":
@@ -374,8 +382,14 @@ class SettingsScreen(QWidget):
         if not ssid:
             QMessageBox.warning(self, "Wi-Fi", "Select or enter a network name.")
             return
+        selected = self._selected_wifi
+        security = (
+            selected.security
+            if selected is not None and selected.ssid == ssid
+            else ("WPA2" if password else "Open")
+        )
         self._network_state.setText(f"Connecting to {ssid}…")
-        self._start_network_task("connect", ssid, password)
+        self._start_network_task("connect", ssid, password, security)
         self._password.clear()
 
     def _show_network_snapshot(self, snapshot: NetworkSnapshot) -> None:

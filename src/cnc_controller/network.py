@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import getpass
+import hashlib
 import json
 import shutil
 import socket
@@ -135,25 +136,104 @@ class NetworkManager:
         self,
         ssid: str,
         password: str = "",
+        security: str = "",
         interface: str = "wlan0",
     ) -> NetworkSnapshot:
         self._require_nmcli()
-        if not ssid.strip():
+        ssid = ssid.strip()
+        if not ssid:
             raise NetworkControlError("Select a Wi-Fi network first.")
-        command = [
-            "nmcli",
-            "--wait",
-            "30",
-            "device",
-            "wifi",
-            "connect",
-            ssid,
-            "ifname",
-            interface,
-        ]
-        if password:
-            command.extend(["password", password])
-        self._execute(command, timeout=40, secret=password)
+
+        security_upper = security.upper()
+        is_open = security_upper in ("", "OPEN", "--") and not password
+        if "802.1X" in security_upper or "EAP" in security_upper:
+            raise NetworkControlError(
+                "Enterprise Wi-Fi is not supported yet. "
+                "Use an open or WPA/WPA2/WPA3 Personal network."
+            )
+        if not is_open and not password:
+            raise NetworkControlError("Enter the Wi-Fi password.")
+
+        # Do not allow `device wifi connect` to reuse an incomplete profile.
+        # An incomplete secured profile produces the key-mgmt error reported by
+        # NetworkManager. This profile is owned and safely replaced by the HMI.
+        profile = f"CNC-HMI-{hashlib.sha256(ssid.encode()).hexdigest()[:12]}"
+        profiles = self._execute(
+            [
+                "nmcli",
+                "--terse",
+                "--escape",
+                "yes",
+                "--fields",
+                "NAME",
+                "connection",
+                "show",
+            ],
+            timeout=10,
+        )
+        existing = {
+            _split_nmcli(line)[0]
+            for line in profiles.stdout.splitlines()
+            if line
+        }
+        if profile in existing:
+            self._execute(
+                ["nmcli", "connection", "delete", "id", profile],
+                timeout=10,
+            )
+
+        self._execute(
+            [
+                "nmcli",
+                "connection",
+                "add",
+                "type",
+                "wifi",
+                "ifname",
+                interface,
+                "con-name",
+                profile,
+                "ssid",
+                ssid,
+            ],
+            timeout=15,
+        )
+        if not is_open:
+            key_management = (
+                "sae"
+                if "WPA3" in security_upper and "WPA2" not in security_upper
+                else "wpa-psk"
+            )
+            self._execute(
+                [
+                    "nmcli",
+                    "connection",
+                    "modify",
+                    "id",
+                    profile,
+                    "802-11-wireless-security.key-mgmt",
+                    key_management,
+                    "802-11-wireless-security.psk",
+                    password,
+                ],
+                timeout=15,
+                secret=password,
+            )
+        self._execute(
+            [
+                "nmcli",
+                "--wait",
+                "30",
+                "connection",
+                "up",
+                "id",
+                profile,
+                "ifname",
+                interface,
+            ],
+            timeout=40,
+            secret=password,
+        )
         return self.snapshot()
 
     def _require_nmcli(self) -> None:
