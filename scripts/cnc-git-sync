@@ -1,0 +1,68 @@
+#!/bin/sh
+set -eu
+
+repo=${CNC_CONTROLLER_REPO:-/home/quentin/Custom-CNC-Controller}
+cd "$repo"
+
+record_status() {
+    result=$1
+    commit=$2
+    message=$3
+    pulled=${4:-no}
+    if [ -x .venv/bin/python ]; then
+        if [ "$pulled" = yes ]; then
+            .venv/bin/python -m cnc_controller.update_status record \
+                --result "$result" --commit "$commit" \
+                --message "$message" --pulled
+        else
+            .venv/bin/python -m cnc_controller.update_status record \
+                --result "$result" --commit "$commit" \
+                --message "$message"
+        fi
+    fi
+}
+
+commit=$(git rev-parse --short HEAD)
+
+if [ -n "$(git status --porcelain)" ]; then
+    message="Sync skipped: working tree has local changes."
+    record_status skipped "$commit" "$message"
+    echo "$message"
+    exit 0
+fi
+
+if ! git fetch --quiet origin main; then
+    message="Update check failed while contacting GitHub."
+    record_status failed "$commit" "$message"
+    echo "$message"
+    exit 1
+fi
+
+if git merge-base --is-ancestor HEAD origin/main; then
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+        git merge --ff-only origin/main
+        commit=$(git rev-parse --short HEAD)
+        if ! .venv/bin/python -m pip install --quiet -e ".[cnc]"; then
+            message="Updated source to $commit, but dependency installation failed."
+            record_status failed "$commit" "$message"
+            echo "$message"
+            exit 1
+        fi
+        if [ -f scripts/cnc-git-sync ]; then
+            install -m 0755 scripts/cnc-git-sync \
+                /home/quentin/.local/bin/cnc-git-sync
+        fi
+        message="Updated to $commit. Restart the UI to load the new code."
+        record_status updated "$commit" "$message" yes
+        echo "$message"
+    else
+        message="Already current at $commit."
+        record_status current "$commit" "$message"
+        echo "$message"
+    fi
+else
+    message="Sync skipped: local and remote branches have diverged."
+    record_status failed "$commit" "$message"
+    echo "$message"
+    exit 1
+fi

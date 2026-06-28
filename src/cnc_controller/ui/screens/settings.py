@@ -1,16 +1,34 @@
-"""Settings screen."""
+"""Touchscreen settings, including SSH status and Wi-Fi configuration."""
 from __future__ import annotations
 
 from ..qt_compat import (
-    Qt, QWidget, QLabel, QFrame, QVBoxLayout, QHBoxLayout,
-    QPushButton, QSizePolicy,
+    Qt,
+    QEvent,
+    QLabel,
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QThread,
+    QVBoxLayout,
+    QWidget,
+    Signal,
 )
 from ..theme import (
-    C_CARD, C_CARD_BORDER, C_DIVIDER, C_TEXT, C_MUTED, C_DIM,
-    C_GREEN, C_GREEN_BG, C_GREEN_BORDER, C_GREEN_TEXT,
-    CARD_RADIUS, BTN_RADIUS,
+    C_BLUE,
+    C_CARD_BORDER,
+    C_DIM,
+    C_GREEN,
+    C_GREEN_BG,
+    C_GREEN_BORDER,
+    C_GREEN_TEXT,
+    C_MUTED,
 )
-from ...grbl_worker import GrblStatus
+from ..widgets.touch_keyboard import TouchKeyboard
+from ...network import NetworkManager, NetworkSnapshot, WifiNetwork
+from ...update_status import UpdateManager, UpdateStatus
 
 
 SECTIONS = [
@@ -25,157 +43,470 @@ SECTIONS = [
 ]
 
 
+class NetworkTask(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        manager: NetworkManager,
+        action: str,
+        ssid: str = "",
+        password: str = "",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._manager = manager
+        self._action = action
+        self._ssid = ssid
+        self._password = password
+
+    def run(self) -> None:
+        try:
+            if self._action == "status":
+                result = self._manager.snapshot()
+            elif self._action == "scan":
+                result = self._manager.scan_wifi()
+            else:
+                result = self._manager.connect_wifi(
+                    self._ssid, self._password
+                )
+            self.completed.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            self._password = ""
+
+
+class UpdateTask(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, manager: UpdateManager, check_now: bool, parent=None):
+        super().__init__(parent)
+        self._manager = manager
+        self._check_now = check_now
+
+    def run(self) -> None:
+        try:
+            result = (
+                self._manager.check_now()
+                if self._check_now
+                else self._manager.status()
+            )
+            self.completed.emit(result)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+def _button(text: str, style: str = "btnSecondary", height: int = 48):
+    button = QPushButton(text)
+    button.setObjectName(style)
+    button.setFixedHeight(height)
+    return button
+
+
+def _clear(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget():
+            item.widget().deleteLater()
+        elif item.layout():
+            _clear(item.layout())
+
+
 class SettingsScreen(QWidget):
     def __init__(self, ctrl, parent: QWidget | None = None):
         super().__init__(parent)
         self._ctrl = ctrl
         self._active_section = "Display"
+        self._network = NetworkManager()
+        self._network_task: NetworkTask | None = None
+        self._updates = UpdateManager()
+        self._update_task: UpdateTask | None = None
+        self._selected_wifi: WifiNetwork | None = None
         self._build_ui()
+        self._keyboard = TouchKeyboard(self)
+        self._position_keyboard()
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
         root.setSpacing(12)
 
-        # Left nav
         nav = QFrame(self)
         nav.setObjectName("card")
         nav.setFixedWidth(240)
-        nl = QVBoxLayout(nav)
-        nl.setContentsMargins(8, 8, 8, 8)
-        nl.setSpacing(3)
-
+        nav_layout = QVBoxLayout(nav)
+        nav_layout.setContentsMargins(8, 8, 8, 8)
+        nav_layout.setSpacing(3)
         self._nav_btns: list[QPushButton] = []
         for section in SECTIONS:
-            btn = QPushButton(section, nav)
-            btn.setFixedHeight(46)
-            btn.clicked.connect(lambda _, s=section: self._show_section(s))
-            self._nav_btns.append(btn)
-            nl.addWidget(btn)
-        nl.addStretch()
+            button = QPushButton(section, nav)
+            button.setFixedHeight(46)
+            button.clicked.connect(
+                lambda _checked=False, name=section: self._show_section(name)
+            )
+            self._nav_btns.append(button)
+            nav_layout.addWidget(button)
+        nav_layout.addStretch()
         root.addWidget(nav)
 
-        self._refresh_nav()
-
-        # Right: content area
         self._content = QFrame(self)
         self._content.setObjectName("card")
-        cl = QVBoxLayout(self._content)
-        cl.setContentsMargins(16, 16, 16, 16)
-        cl.setSpacing(14)
-
-        self._content_sec = QLabel("DISPLAY", self._content)
-        self._content_sec.setObjectName("labelSection")
-        cl.addWidget(self._content_sec)
-
-        # Brightness row
-        br = QHBoxLayout()
-        br.addWidget(QLabel("Brightness", self._content))
-        br.addStretch()
-        br.addWidget(QLabel("80%", self._content))
-        cl.addLayout(br)
-
-        # Theme toggle
-        theme_row = QHBoxLayout()
-        theme_info = QWidget(self._content)
-        theme_info.setStyleSheet("background: transparent; border: none;")
-        til = QVBoxLayout(theme_info)
-        til.setContentsMargins(0, 0, 0, 0)
-        til.addWidget(QLabel("Theme", theme_info))
-        sub = QLabel("high-brightness shop display", theme_info)
-        sub.setStyleSheet(f"color: {C_DIM}; font-size: 12px; background: transparent; border: none;")
-        til.addWidget(sub)
-        theme_row.addWidget(theme_info, 1)
-        theme_toggle = QFrame(self._content)
-        theme_toggle.setStyleSheet(
-            f"QFrame {{ border: 1px solid {C_CARD_BORDER}; border-radius: 8px; background: transparent; }}"
-        )
-        ttl = QHBoxLayout(theme_toggle)
-        ttl.setContentsMargins(0, 0, 0, 0)
-        ttl.setSpacing(0)
-        light = QLabel("Light", theme_toggle)
-        light.setAlignment(Qt.AlignCenter)
-        light.setFixedSize(60, 36)
-        light.setStyleSheet(
-            f"background: {C_GREEN}; color: white; font-size: 13px; font-weight: 700; border-radius: 7px;"
-        )
-        dark = QLabel("Dark", theme_toggle)
-        dark.setAlignment(Qt.AlignCenter)
-        dark.setFixedSize(50, 36)
-        dark.setStyleSheet(f"color: {C_MUTED}; font-size: 13px; font-weight: 700; background: transparent;")
-        ttl.addWidget(light)
-        ttl.addWidget(dark)
-        theme_row.addWidget(theme_toggle)
-        cl.addLayout(theme_row)
-
-        # Screen timeout
-        to_row = QHBoxLayout()
-        to_info = QWidget(self._content)
-        to_info.setStyleSheet("background: transparent; border: none;")
-        toil = QVBoxLayout(to_info)
-        toil.setContentsMargins(0, 0, 0, 0)
-        toil.addWidget(QLabel("Screen timeout", to_info))
-        tos = QLabel("dim after inactivity", to_info)
-        tos.setStyleSheet(f"color: {C_DIM}; font-size: 12px; background: transparent; border: none;")
-        toil.addWidget(tos)
-        to_row.addWidget(to_info, 1)
-        to_row.addWidget(QLabel("Never", self._content))
-        cl.addLayout(to_row)
-
-        cl.addStretch()
-
-        # Sleep button at bottom
-        sleep_btn = QPushButton("Sleep", self._content)
-        sleep_btn.setObjectName("btnSecondary")
-        sleep_btn.setFixedHeight(54)
-        sleep_btn.clicked.connect(self._sleep_display)
-        cl.addWidget(sleep_btn)
-
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(16, 16, 16, 16)
+        self._content_layout.setSpacing(12)
         root.addWidget(self._content, 1)
+        self._show_section(self._active_section)
 
     def _show_section(self, section: str) -> None:
+        if hasattr(self, "_keyboard"):
+            self._keyboard.hide_keyboard(clear_target=True)
         self._active_section = section
         self._refresh_nav()
-        self._content_sec.setText(section.upper())
+        _clear(self._content_layout)
+        title = QLabel(section.upper(), self._content)
+        title.setObjectName("labelSection")
+        self._content_layout.addWidget(title)
+        if section == "Display":
+            self._build_display()
+        elif section == "Network":
+            self._build_network()
+        elif section == "Updates":
+            self._build_updates()
+        else:
+            self._build_placeholder(section)
+
+    def _build_display(self) -> None:
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Theme", self._content))
+        row.addStretch()
+        value = QLabel("Light · high-brightness shop display", self._content)
+        value.setStyleSheet(f"color:{C_MUTED};background:transparent;border:none")
+        row.addWidget(value)
+        self._content_layout.addLayout(row)
+
+        timeout = QHBoxLayout()
+        timeout.addWidget(QLabel("Screen timeout", self._content))
+        timeout.addStretch()
+        timeout.addWidget(QLabel("Never", self._content))
+        self._content_layout.addLayout(timeout)
+        self._content_layout.addStretch()
+        sleep = _button("Sleep", height=54)
+        sleep.clicked.connect(self._sleep_display)
+        self._content_layout.addWidget(sleep)
+
+    def _build_network(self) -> None:
+        addresses = QFrame(self._content)
+        addresses.setObjectName("card")
+        address_layout = QVBoxLayout(addresses)
+        address_layout.setContentsMargins(13, 11, 13, 11)
+        address_layout.setSpacing(5)
+        self._network_state = QLabel("Reading network addresses…", addresses)
+        self._network_state.setStyleSheet(
+            "font-size:16px;font-weight:700;background:transparent;border:none"
+        )
+        address_layout.addWidget(self._network_state)
+        self._ethernet_ip = QLabel("Ethernet  —", addresses)
+        self._wifi_ip = QLabel("Wi-Fi  —", addresses)
+        self._ssh_command = QLabel("SSH  —", addresses)
+        self._ssh_command.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._ssh_command.setStyleSheet(
+            f"color:{C_BLUE};font-size:15px;font-weight:700;"
+            "font-family:monospace;background:transparent;border:none"
+        )
+        address_layout.addWidget(self._ethernet_ip)
+        address_layout.addWidget(self._wifi_ip)
+        address_layout.addWidget(self._ssh_command)
+        self._content_layout.addWidget(addresses)
+
+        controls = QHBoxLayout()
+        refresh = _button("Refresh IP", height=46)
+        refresh.clicked.connect(self._refresh_network)
+        controls.addWidget(refresh)
+        self._scan_btn = _button("Scan Wi-Fi", "btnPrimary", 46)
+        self._scan_btn.clicked.connect(self._scan_wifi)
+        controls.addWidget(self._scan_btn)
+        self._content_layout.addLayout(controls)
+
+        connection = QFrame(self._content)
+        connection.setObjectName("card")
+        connection_layout = QVBoxLayout(connection)
+        connection_layout.setContentsMargins(12, 10, 12, 10)
+        connection_layout.setSpacing(7)
+        self._ssid = QLineEdit(connection)
+        self._ssid.setPlaceholderText("Select a network below or enter SSID")
+        self._ssid.setFixedHeight(44)
+        self._ssid.installEventFilter(self)
+        self._password = QLineEdit(connection)
+        self._password.setPlaceholderText("Wi-Fi password")
+        self._password.setEchoMode(QLineEdit.Password)
+        self._password.setFixedHeight(44)
+        self._password.installEventFilter(self)
+        connect = _button("Connect", "btnPrimary", 50)
+        connect.clicked.connect(self._connect_wifi)
+        fields = QHBoxLayout()
+        fields.addWidget(self._ssid, 3)
+        fields.addWidget(self._password, 3)
+        fields.addWidget(connect, 2)
+        connection_layout.addLayout(fields)
+        self._content_layout.addWidget(connection)
+
+        self._wifi_scroll = QScrollArea(self._content)
+        self._wifi_scroll.setWidgetResizable(True)
+        self._wifi_host = QWidget(self._wifi_scroll)
+        self._wifi_layout = QVBoxLayout(self._wifi_host)
+        self._wifi_layout.setContentsMargins(0, 0, 4, 0)
+        self._wifi_layout.setSpacing(6)
+        hint = QLabel("Tap Scan Wi-Fi to list nearby networks.", self._wifi_host)
+        hint.setStyleSheet(f"color:{C_DIM};background:transparent;border:none")
+        self._wifi_layout.addWidget(hint)
+        self._wifi_layout.addStretch()
+        self._wifi_scroll.setWidget(self._wifi_host)
+        self._content_layout.addWidget(self._wifi_scroll, 1)
+        self._refresh_network()
+
+    def _build_updates(self) -> None:
+        summary = QFrame(self._content)
+        summary.setObjectName("card")
+        layout = QHBoxLayout(summary)
+        layout.setContentsMargins(15, 12, 15, 12)
+        count_box = QVBoxLayout()
+        count_label = QLabel("SUCCESSFUL PULLS", summary)
+        count_label.setObjectName("labelSection")
+        self._pull_count = QLabel("—", summary)
+        self._pull_count.setStyleSheet(
+            f"color:{C_GREEN};font-size:46px;font-weight:700;"
+            "background:transparent;border:none"
+        )
+        count_box.addWidget(count_label)
+        count_box.addWidget(self._pull_count)
+        layout.addLayout(count_box, 1)
+        details = QVBoxLayout()
+        self._last_pull = QLabel("Last pull  —", summary)
+        self._last_check = QLabel("Last check  —", summary)
+        self._current_commit = QLabel("Commit  —", summary)
+        for label in (
+            self._last_pull,
+            self._last_check,
+            self._current_commit,
+        ):
+            label.setStyleSheet(
+                "font-size:14px;font-weight:600;background:transparent;border:none"
+            )
+            details.addWidget(label)
+        layout.addLayout(details, 2)
+        self._content_layout.addWidget(summary)
+
+        self._update_message = QLabel(
+            "Reading update status…", self._content
+        )
+        self._update_message.setWordWrap(True)
+        self._update_message.setStyleSheet(
+            f"background:{C_GREEN_BG};color:{C_GREEN_TEXT};"
+            f"border:1px solid {C_GREEN_BORDER};border-radius:10px;"
+            "padding:12px;font-size:14px;font-weight:700"
+        )
+        self._content_layout.addWidget(self._update_message)
+        self._content_layout.addStretch()
+        self._check_updates = _button(
+            "Check GitHub Now", "btnPrimary", 58
+        )
+        self._check_updates.clicked.connect(
+            lambda: self._refresh_updates(check_now=True)
+        )
+        self._content_layout.addWidget(self._check_updates)
+        self._refresh_updates()
+
+    def _build_placeholder(self, section: str) -> None:
+        text = QLabel(
+            f"{section} controls will be added as the controller hardware is configured.",
+            self._content,
+        )
+        text.setWordWrap(True)
+        text.setStyleSheet(
+            f"color:{C_MUTED};font-size:15px;background:transparent;border:none"
+        )
+        self._content_layout.addWidget(text)
+        self._content_layout.addStretch()
 
     def _refresh_nav(self) -> None:
-        for btn, section in zip(self._nav_btns, SECTIONS):
+        for button, section in zip(self._nav_btns, SECTIONS):
             if section == self._active_section:
-                btn.setStyleSheet(
-                    f"QPushButton {{ background: {C_GREEN_BG}; color: {C_GREEN_TEXT}; "
-                    f"border: 1px solid {C_GREEN_BORDER}; border-radius: 9px; "
-                    f"font-size: 15px; font-weight: 700; text-align: left; padding-left: 14px; }}"
+                button.setStyleSheet(
+                    f"QPushButton{{background:{C_GREEN_BG};color:{C_GREEN_TEXT};"
+                    f"border:1px solid {C_GREEN_BORDER};border-radius:9px;"
+                    "font-size:15px;font-weight:700;text-align:left;padding-left:14px}"
                 )
             else:
-                btn.setStyleSheet(
-                    f"QPushButton {{ background: transparent; color: {C_MUTED}; border: none; "
-                    f"font-size: 15px; font-weight: 600; text-align: left; padding-left: 14px; }}"
+                button.setStyleSheet(
+                    f"QPushButton{{background:transparent;color:{C_MUTED};border:none;"
+                    "font-size:15px;font-weight:600;text-align:left;padding-left:14px}"
                 )
+
+    def _start_network_task(self, action: str, ssid: str = "", password: str = ""):
+        if self._network_task and self._network_task.isRunning():
+            return
+        self._network_task = NetworkTask(
+            self._network, action, ssid, password, self
+        )
+        self._network_task.failed.connect(self._network_failed)
+        if action == "scan":
+            self._network_task.completed.connect(self._show_wifi_networks)
+        else:
+            self._network_task.completed.connect(self._show_network_snapshot)
+        self._network_task.start()
+
+    def _refresh_network(self) -> None:
+        if hasattr(self, "_network_state"):
+            self._network_state.setText("Reading network addresses…")
+        self._start_network_task("status")
+
+    def _scan_wifi(self) -> None:
+        self._scan_btn.setEnabled(False)
+        self._scan_btn.setText("Scanning…")
+        self._start_network_task("scan")
+
+    def _connect_wifi(self) -> None:
+        ssid = self._ssid.text().strip()
+        password = self._password.text()
+        if not ssid:
+            QMessageBox.warning(self, "Wi-Fi", "Select or enter a network name.")
+            return
+        self._network_state.setText(f"Connecting to {ssid}…")
+        self._start_network_task("connect", ssid, password)
+        self._password.clear()
+
+    def _show_network_snapshot(self, snapshot: NetworkSnapshot) -> None:
+        if self._active_section != "Network":
+            return
+        addresses = {item.name: item.address for item in snapshot.interfaces}
+        ethernet = next(
+            (value for name, value in addresses.items() if name.startswith(("eth", "en"))),
+            "—",
+        )
+        wifi = next(
+            (value for name, value in addresses.items() if name.startswith(("wlan", "wlp"))),
+            "—",
+        )
+        self._network_state.setText(f"{snapshot.hostname} · SSH ready")
+        self._ethernet_ip.setText(f"Ethernet  {ethernet}")
+        self._wifi_ip.setText(f"Wi-Fi  {wifi}")
+        self._ssh_command.setText(f"SSH  {snapshot.ssh_command}")
+
+    def _show_wifi_networks(self, networks: list[WifiNetwork]) -> None:
+        if self._active_section != "Network":
+            return
+        self._scan_btn.setEnabled(True)
+        self._scan_btn.setText("Scan Wi-Fi")
+        _clear(self._wifi_layout)
+        if not networks:
+            self._wifi_layout.addWidget(QLabel("No Wi-Fi networks found.", self._wifi_host))
+        for network in networks:
+            lock = "Secured" if network.security != "Open" else "Open"
+            active = " · CONNECTED" if network.connected else ""
+            button = _button(
+                f"{network.ssid}   {network.signal}% · {lock}{active}",
+                "btnPrimary" if network.connected else "btnSecondary",
+                46,
+            )
+            button.clicked.connect(
+                lambda _checked=False, item=network: self._select_wifi(item)
+            )
+            self._wifi_layout.addWidget(button)
+        self._wifi_layout.addStretch()
+
+    def _select_wifi(self, network: WifiNetwork) -> None:
+        self._selected_wifi = network
+        self._ssid.setText(network.ssid)
+        self._password.setFocus()
+
+    def _network_failed(self, message: str) -> None:
+        if self._active_section != "Network":
+            return
+        if hasattr(self, "_scan_btn"):
+            self._scan_btn.setEnabled(True)
+            self._scan_btn.setText("Scan Wi-Fi")
+        if hasattr(self, "_network_state"):
+            self._network_state.setText("Network action failed")
+        QMessageBox.critical(self, "Network", message)
+
+    def _refresh_updates(self, check_now: bool = False) -> None:
+        if self._update_task and self._update_task.isRunning():
+            return
+        if hasattr(self, "_check_updates"):
+            self._check_updates.setEnabled(False)
+            self._check_updates.setText(
+                "Checking GitHub…" if check_now else "Reading status…"
+            )
+        self._update_task = UpdateTask(
+            self._updates, check_now, self
+        )
+        self._update_task.completed.connect(self._show_update_status)
+        self._update_task.failed.connect(self._update_failed)
+        self._update_task.start()
+
+    def _show_update_status(self, status: UpdateStatus) -> None:
+        if self._active_section != "Updates":
+            return
+        self._pull_count.setText(str(status.pull_count))
+        self._last_pull.setText(f"Last pull  {status.last_pull_display}")
+        self._last_check.setText(f"Last check  {status.last_check_display}")
+        commit = status.current_commit or "Unknown"
+        self._current_commit.setText(f"Commit  {commit}")
+        self._update_message.setText(status.message)
+        self._check_updates.setEnabled(True)
+        self._check_updates.setText("Check GitHub Now")
+
+    def _update_failed(self, message: str) -> None:
+        if self._active_section != "Updates":
+            return
+        self._update_message.setText(f"Update check failed: {message}")
+        self._check_updates.setEnabled(True)
+        self._check_updates.setText("Check GitHub Now")
 
     def _sleep_display(self) -> None:
         import sys
+
         if sys.platform == "win32":
-            # Windows: send WM_SYSCOMMAND / SC_MONITORPOWER (2 = off)
-            # Any subsequent input wakes the monitor automatically.
             import ctypes
+
             ctypes.windll.user32.SendMessageW(0xFFFF, 0x0112, 0xF170, 2)
         else:
-            # Linux: use X11 DPMS to blank the display.
-            # Any touch/pointer event will wake it without extra daemon code.
             import subprocess
-            result = subprocess.run(["xset", "dpms", "force", "off"], capture_output=True)
-            if result.returncode != 0:
-                # Framebuffer fallback (no X11): dim backlight to 0.
-                # A udev input rule or the Qt event loop touching the display
-                # will be needed to restore it on this path.
-                import glob
-                for path in glob.glob("/sys/class/backlight/*/brightness"):
-                    try:
-                        with open(path, "w") as f:
-                            f.write("0")
-                    except OSError:
-                        pass
+
+            subprocess.run(
+                ["xset", "dpms", "force", "off"],
+                capture_output=True,
+                check=False,
+            )
 
     def on_enter(self) -> None:
         self._ctrl.rail.set_enc1("SELECT", "setting")
         self._ctrl.rail.set_enc2("ADJUST", "value")
+        if self._active_section == "Network":
+            self._refresh_network()
+        elif self._active_section == "Updates":
+            self._refresh_updates()
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (QEvent.FocusIn, QEvent.MouseButtonPress):
+            if watched is getattr(self, "_ssid", None):
+                self._keyboard.show_for(self._ssid, "Wi-Fi network name")
+            elif watched is getattr(self, "_password", None):
+                self._keyboard.show_for(self._password, "Wi-Fi password")
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_keyboard()
+
+    def _position_keyboard(self) -> None:
+        if hasattr(self, "_keyboard"):
+            self._keyboard.setGeometry(
+                0,
+                max(0, self.height() - self._keyboard.HEIGHT),
+                self.width(),
+                self._keyboard.HEIGHT,
+            )
