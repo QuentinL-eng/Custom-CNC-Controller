@@ -47,6 +47,17 @@ class StatusBar(QFrame):
         self._badge.setFixedHeight(30)
         layout.addWidget(self._badge)
 
+        # Simulation badge — only visible when running on the mock GRBL, so the
+        # operator can never mistake the simulator for the real machine.
+        self._sim_label = QLabel("SIMULATION", self)
+        self._sim_label.setFixedHeight(30)
+        self._sim_label.setStyleSheet(
+            "color: white; background: #d98a0a; border: 1px solid #b87208; "
+            "border-radius: 6px; font-size: 12px; font-weight: 800; padding: 5px 10px;"
+        )
+        self._sim_label.setVisible(False)
+        layout.addWidget(self._sim_label)
+
         # State indicator dot + text
         self._dot = QLabel("●", self)
         self._dot.setStyleSheet(f"color: {C_DIM}; font-size: 10px; background: transparent; border: none;")
@@ -162,6 +173,10 @@ class StatusBar(QFrame):
     def set_message(self, text: str) -> None:
         """Show a transient message in place of the connection label."""
         self._conn_label.setText(text or "GRBL · —")
+
+    def set_simulation(self, on: bool) -> None:
+        """Show/hide the SIMULATION badge (mock GRBL, no real hardware)."""
+        self._sim_label.setVisible(bool(on))
 
     def _update_clock(self) -> None:
         self._clock.setText(time.strftime("%H:%M"))

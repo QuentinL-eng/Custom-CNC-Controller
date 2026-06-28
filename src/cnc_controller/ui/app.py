@@ -179,17 +179,8 @@ class AppController:
     # Connection management
     # ------------------------------------------------------------------
 
-    def reconnect_serial(self) -> None:
-        if self.worker is not None and hasattr(self.worker, "reconnect"):
-            self.worker.reconnect()
-        else:
-            self._win.reinit_serial()
-
-    def disconnect_serial(self) -> None:
-        if self.worker is not None:
-            self.worker.detach_serial()
-
-    def connect_worker(self, serial_obj) -> None:
+    def ensure_worker(self) -> None:
+        """Create, wire and start the GRBL worker thread (once)."""
         if self.worker is None:
             self.worker = GrblWorker(self.profile, self._win)
             self.worker.status_updated.connect(self._win.on_status)
@@ -202,7 +193,21 @@ class AppController:
             if hasattr(self.worker, "alarm_raised"):
                 self.worker.alarm_raised.connect(self._win.on_alarm)
             self.worker.start()
-        self.worker.attach_serial(serial_obj)
+
+    def reconnect_serial(self) -> None:
+        """Manual reconnect (Diagnostics). Non-blocking — the worker thread
+        performs the actual port open."""
+        self.ensure_worker()
+        if hasattr(self.worker, "request_connect"):
+            self.worker.request_connect()
+
+    def disconnect_serial(self) -> None:
+        if self.worker is None:
+            return
+        if hasattr(self.worker, "request_disconnect"):
+            self.worker.request_disconnect()
+        else:
+            self.worker.detach_serial()
 
 
 # ---------------------------------------------------------------------------
@@ -354,56 +359,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _init_serial(self, use_mock: bool, port: str | None) -> None:
-        self._splash.set_progress(60, "Initialising serial…")
         self._use_mock = use_mock
         self._explicit_port = port
-
-        serial_obj = self._open_serial(use_mock, port, on_splash=True)
-
-        self._controller.connect_worker(serial_obj)
-        self._splash.set_progress(100, "Ready")
-        QTimer.singleShot(400, lambda: self.show_screen("home"))
-
-    def _open_serial(self, use_mock: bool, port: str | None, on_splash: bool = False):
-        """Open a serial object, auto-detecting a port when none is given.
-
-        Falls back to a MockSerial when no hardware can be reached.
-        """
-        def _progress(pct: int, msg: str) -> None:
-            if on_splash:
-                self._splash.set_progress(pct, msg)
+        ctrl = self._controller
+        ctrl.ensure_worker()
 
         if use_mock:
-            _progress(90, "Using simulated GRBL")
-            return MockSerial()
+            # Explicit simulation only — never a silent fallback.
+            self._splash.set_progress(90, "SIMULATION mode (no hardware)")
+            ctrl.worker.attach_serial(MockSerial(), is_mock=True)
+        else:
+            target = port or ctrl.profile.serial_port
+            self._splash.set_progress(90, f"Waiting for machine on {target}…")
+            # The worker opens the port on its own thread and keeps retrying
+            # until the machine appears — no silent mock, no GUI-thread blocking.
+            ctrl.worker.enable_auto_connect(target, ctrl.profile.baud_rate)
 
-        candidate = port or self._controller.profile.serial_port
-        # When no explicit port was requested, try to auto-detect one.
-        if not port:
-            try:
-                detected = GrblWorker.list_ports()
-            except Exception:
-                detected = []
-            if detected:
-                candidate = detected[0]
-
-        try:
-            import serial as _serial
-            serial_obj = _serial.Serial(
-                candidate, self._controller.profile.baud_rate, timeout=0.05
-            )
-            _progress(90, f"Connected: {candidate}")
-            return serial_obj
-        except Exception as exc:
-            _progress(75, f"Serial failed, using mock: {exc}")
-            return MockSerial()
-
-    def reinit_serial(self) -> None:
-        """Re-open the serial port using the same options as startup."""
-        use_mock = getattr(self, "_use_mock", True)
-        port = getattr(self, "_explicit_port", None)
-        serial_obj = self._open_serial(use_mock, port, on_splash=False)
-        self._controller.connect_worker(serial_obj)
+        self._splash.set_progress(100, "Ready")
+        QTimer.singleShot(400, lambda: self.show_screen("home"))
 
     # ------------------------------------------------------------------
     # GRBL signal handlers
@@ -459,8 +432,10 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_connected(self) -> None:
-        self._reconnect_pending = False
-        self.status_bar.set_message("GRBL · Connected")
+        worker = self._controller.worker
+        sim = bool(worker is not None and getattr(worker, "is_simulation", False))
+        self.status_bar.set_simulation(sim)
+        self.status_bar.set_message("SIMULATION — no machine" if sim else "GRBL · Connected")
 
     def on_disconnected(self) -> None:
         self.status_bar.set_status(GrblStatus(state="Disconnected"))

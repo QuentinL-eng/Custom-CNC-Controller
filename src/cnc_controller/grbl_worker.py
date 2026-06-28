@@ -151,13 +151,25 @@ class GrblWorker(QThread):
         self._stop_flag = threading.Event()
         self._last_status = GrblStatus()
 
+        # Auto-connect state. ALL serial opens happen on this worker thread so
+        # the GUI thread can never block/freeze on a port open (which also
+        # toggles DTR and resets GRBL).
+        self._target_port: str | None = None
+        self._target_baud: int = profile.baud_rate
+        self._auto_connect: bool = False
+        self._next_connect_attempt: float = 0.0
+        self._is_mock: bool = False
+
     # ------------------------------------------------------------------
     # Public API — called from main thread
     # ------------------------------------------------------------------
 
-    def attach_serial(self, serial_obj) -> None:
+    def attach_serial(self, serial_obj, is_mock: bool = False) -> None:
         with self._serial_lock:
             self._serial = serial_obj
+        self._is_mock = is_mock
+        if is_mock:
+            self._auto_connect = False
         self.connected.emit()
 
     def detach_serial(self) -> None:
@@ -168,8 +180,69 @@ class GrblWorker(QThread):
                 except Exception:
                     pass
             self._serial = None
+        # A disconnect ends any in-flight job; don't let streaming state leak
+        # into a later reconnect.
+        self._streaming = False
+        self._awaiting_ok = False
+        self._job_lines = []
+        self._job_index = 0
         self._last_status = GrblStatus()
         self.disconnected.emit()
+
+    @property
+    def is_simulation(self) -> bool:
+        return self._is_mock
+
+    def enable_auto_connect(self, port: str, baud: int | None = None) -> None:
+        """Keep trying to open `port` on the worker thread until the machine
+        appears. Used for real hardware so a missing device at boot never
+        silently falls back to the simulator."""
+        self._target_port = port
+        if baud:
+            self._target_baud = baud
+        self._is_mock = False
+        self._auto_connect = True
+        self._next_connect_attempt = 0.0
+
+    def request_connect(self) -> None:
+        """Manual (re)connect — non-blocking; the worker thread does the open."""
+        if not self._target_port:
+            self._target_port = self._profile.serial_port
+            self._target_baud = self._profile.baud_rate
+        self._auto_connect = True
+        self._next_connect_attempt = 0.0
+
+    def request_disconnect(self) -> None:
+        """Manual disconnect — stop auto-connect and close the port."""
+        self._auto_connect = False
+        self.detach_serial()
+
+    def _try_open(self) -> None:
+        """Attempt to open the target port (worker thread only). Tries the
+        configured port first, then any auto-detected USB-serial port."""
+        if not self._target_port:
+            return
+        try:
+            import serial as _serial
+        except ImportError:
+            return
+        candidates = [self._target_port]
+        try:
+            for c in self.list_ports():
+                if c not in candidates:
+                    candidates.append(c)
+        except Exception:
+            pass
+        for port in candidates:
+            try:
+                ser = _serial.Serial(port, self._target_baud, timeout=0.05)
+            except Exception:
+                continue
+            with self._serial_lock:
+                self._serial = ser
+            self._is_mock = False
+            self.connected.emit()
+            return
 
     @property
     def is_connected(self) -> bool:
@@ -306,6 +379,11 @@ class GrblWorker(QThread):
                 serial = self._serial
 
             if serial is None:
+                if self._auto_connect:
+                    now = time.monotonic()
+                    if now >= self._next_connect_attempt:
+                        self._next_connect_attempt = now + 2.0
+                        self._try_open()
                 self.msleep(100)
                 continue
 

@@ -157,3 +157,55 @@ def test_mock_serial_feed_override_bytes_and_ov_field():
     parsed = parse_status(status_line)
     assert parsed is not None and parsed.overrides == (100, 100, 100)
     mock.close()
+
+
+def test_enable_auto_connect_sets_target_without_blocking():
+    worker = GrblWorker(_profile())
+    worker.enable_auto_connect("/dev/ttyUSB0", 115200)
+    assert worker._auto_connect is True
+    assert worker._target_port == "/dev/ttyUSB0"
+    assert worker._target_baud == 115200
+    assert worker._next_connect_attempt == 0.0
+    assert worker.is_connected is False  # nothing opened on the calling thread
+
+
+def test_attach_mock_marks_simulation_and_disables_autoconnect():
+    worker = GrblWorker(_profile())
+    worker.enable_auto_connect("/dev/ttyUSB0")
+    worker.attach_serial(MockSerial(), is_mock=True)
+    assert worker.is_simulation is True
+    assert worker._auto_connect is False
+    assert worker.is_connected is True
+
+
+def test_attach_real_serial_is_not_simulation():
+    worker = GrblWorker(_profile())
+    worker.attach_serial(FakeSerial())
+    assert worker.is_simulation is False
+    assert worker.is_connected is True
+
+
+def test_request_disconnect_stops_autoconnect_and_closes():
+    worker = GrblWorker(_profile())
+    worker.attach_serial(MockSerial())
+    worker.request_disconnect()
+    assert worker._auto_connect is False
+    assert worker.is_connected is False
+
+
+def test_detach_clears_streaming_state():
+    worker = GrblWorker(_profile())
+    worker.attach_serial(MockSerial())
+    worker._streaming = True
+    worker._job_lines = ["G0 X1", "G0 X2"]
+    worker._job_index = 1
+    worker.detach_serial()
+    assert worker._streaming is False
+    assert worker._job_lines == []
+    assert worker._job_index == 0
+
+
+def test_try_open_without_target_is_noop():
+    worker = GrblWorker(_profile())
+    worker._try_open()  # no target port set — must not raise
+    assert worker.is_connected is False
