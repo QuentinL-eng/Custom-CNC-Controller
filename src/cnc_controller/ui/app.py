@@ -464,23 +464,10 @@ class MainWindow(QMainWindow):
 
     def on_disconnected(self) -> None:
         self.status_bar.set_status(GrblStatus(state="Disconnected"))
-        self.status_bar.set_message("GRBL · disconnected")
-        # Schedule a single best-effort auto-reconnect attempt.
-        if not getattr(self, "_reconnect_pending", False):
-            self._reconnect_pending = True
-            QTimer.singleShot(2000, self._auto_reconnect)
-
-    def _auto_reconnect(self) -> None:
-        if not self._reconnect_pending:
-            return
-        self._reconnect_pending = False
-        worker = self._controller.worker
-        if worker is not None and worker.is_connected:
-            return
-        try:
-            self._controller.reconnect_serial()
-        except Exception:
-            pass
+        self.status_bar.set_message("GRBL · disconnected — Diagnostics ▸ Connect to retry")
+        # No automatic reconnect. Reopening the port toggles DTR and resets GRBL,
+        # and doing that blocking open on the GUI thread froze the UI when a
+        # transient disconnect repeated. Reconnection is manual via Diagnostics.
 
     # ------------------------------------------------------------------
     # Keyboard input — maps to physical GPIO actions later

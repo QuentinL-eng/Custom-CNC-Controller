@@ -142,9 +142,19 @@ class TouchKeyboard(QFrame):
         self._stop_animation()
         self._target = target
         self._title.setText(title)
-        final_position = self.pos()
+        parent = self.parentWidget()
+        parent_h = parent.height() if parent else self.height()
+        parent_w = parent.width() if parent else self.width()
+        # Dock to the bottom of the parent at full width. Compute the resting
+        # geometry explicitly every time: relying on the previous self.pos()
+        # left the keyboard parked off the bottom edge when it had never been
+        # positioned at the correct size yet.
+        self.resize(parent_w, self.HEIGHT)
+        dock = QPoint(0, max(0, parent_h - self.HEIGHT))
         if not was_visible and self._duration:
-            self.move(final_position.x(), self.parentWidget().height())
+            self.move(0, parent_h)
+        else:
+            self.move(dock)
         self.show()
         self.raise_()
         target.setFocus()
@@ -152,7 +162,7 @@ class TouchKeyboard(QFrame):
         if not was_visible and self._duration:
             self._animation = QPropertyAnimation(self, b"pos", self)
             self._animation.setStartValue(self.pos())
-            self._animation.setEndValue(final_position)
+            self._animation.setEndValue(dock)
             self._animation.setDuration(self._duration)
             self._animation.setEasingCurve(QEasingCurve.OutCubic)
             self._animation.start()
