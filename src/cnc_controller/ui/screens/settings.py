@@ -124,12 +124,12 @@ class SettingsScreen(QWidget):
 
         cl.addStretch()
 
-        # Shutdown button at bottom
-        shutdown_btn = QPushButton("Shutdown", self._content)
-        shutdown_btn.setObjectName("btnDanger")
-        shutdown_btn.setFixedHeight(54)
-        shutdown_btn.clicked.connect(self._shutdown)
-        cl.addWidget(shutdown_btn)
+        # Sleep button at bottom
+        sleep_btn = QPushButton("Sleep", self._content)
+        sleep_btn.setObjectName("btnSecondary")
+        sleep_btn.setFixedHeight(54)
+        sleep_btn.clicked.connect(self._sleep_display)
+        cl.addWidget(sleep_btn)
 
         root.addWidget(self._content, 1)
 
@@ -152,12 +152,29 @@ class SettingsScreen(QWidget):
                     f"font-size: 15px; font-weight: 600; text-align: left; padding-left: 14px; }}"
                 )
 
-    def _shutdown(self) -> None:
-        import subprocess
-        try:
-            subprocess.run(["sudo", "shutdown", "-h", "now"])
-        except Exception:
-            pass
+    def _sleep_display(self) -> None:
+        import sys
+        if sys.platform == "win32":
+            # Windows: send WM_SYSCOMMAND / SC_MONITORPOWER (2 = off)
+            # Any subsequent input wakes the monitor automatically.
+            import ctypes
+            ctypes.windll.user32.SendMessageW(0xFFFF, 0x0112, 0xF170, 2)
+        else:
+            # Linux: use X11 DPMS to blank the display.
+            # Any touch/pointer event will wake it without extra daemon code.
+            import subprocess
+            result = subprocess.run(["xset", "dpms", "force", "off"], capture_output=True)
+            if result.returncode != 0:
+                # Framebuffer fallback (no X11): dim backlight to 0.
+                # A udev input rule or the Qt event loop touching the display
+                # will be needed to restore it on this path.
+                import glob
+                for path in glob.glob("/sys/class/backlight/*/brightness"):
+                    try:
+                        with open(path, "w") as f:
+                            f.write("0")
+                    except OSError:
+                        pass
 
     def on_enter(self) -> None:
         self._ctrl.rail.set_enc1("SELECT", "setting")
