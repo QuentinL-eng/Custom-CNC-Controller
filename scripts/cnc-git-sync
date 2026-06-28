@@ -56,17 +56,20 @@ if git merge-base --is-ancestor HEAD origin/main; then
     if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
         git merge --ff-only origin/main
         commit=$(git rev-parse --short HEAD)
+        # Optional/laser dependencies (e.g. rayforge -> pycairo) may fail to
+        # build on a minimal system that lacks the cairo dev headers. That must
+        # NOT fail the whole update: the core UI runs on system Python without
+        # them and the laser screen degrades gracefully. Record a note instead
+        # of aborting, so code updates always land and this script self-installs.
+        dep_note=""
         if ! .venv/bin/python -m pip install --quiet -e ".[cnc]"; then
-            message="Updated source to $commit, but dependency installation failed."
-            record_status failed "$commit" "$message"
-            echo "$message"
-            exit 1
+            dep_note=" (some optional dependencies did not install; core app unaffected)"
         fi
         if [ -f scripts/cnc-git-sync ]; then
             install -m 0755 scripts/cnc-git-sync \
                 /home/quentin/.local/bin/cnc-git-sync
         fi
-        message="Updated to $commit. Restart the UI to load the new code."
+        message="Updated to $commit. Restart the UI to load the new code.$dep_note"
         record_status updated "$commit" "$message" yes
         echo "$message"
     else
