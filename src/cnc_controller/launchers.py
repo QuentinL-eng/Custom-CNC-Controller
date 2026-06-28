@@ -13,11 +13,34 @@ class ApplicationLaunchError(RuntimeError):
     pass
 
 
+class DisplayControlError(RuntimeError):
+    pass
+
+
 def default_bcnc_command() -> list[str]:
     configured = os.environ.get("CNC_CONTROLLER_BCNC_COMMAND")
     if configured:
         return shlex.split(configured, posix=os.name != "nt")
     return [sys.executable, "-m", "bCNC"]
+
+
+def default_display_sleep_command() -> list[str]:
+    configured = os.environ.get("CNC_CONTROLLER_DISPLAY_SLEEP_COMMAND")
+    if configured:
+        return shlex.split(configured, posix=os.name != "nt")
+    return ["xset", "dpms", "force", "off"]
+
+
+def sleep_display(command: Sequence[str] | None = None) -> None:
+    sleep_command = list(command or default_display_sleep_command())
+    if not sleep_command:
+        raise DisplayControlError("The configured display sleep command is empty.")
+    try:
+        subprocess.run(sleep_command, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise DisplayControlError(
+            f"Could not put the display to sleep using {sleep_command[0]!r}: {exc}"
+        ) from exc
 
 
 @dataclass

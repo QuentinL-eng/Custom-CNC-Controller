@@ -6,7 +6,10 @@ import pytest
 from cnc_controller.launchers import (
     ApplicationLaunchError,
     BcncLauncher,
+    DisplayControlError,
     default_bcnc_command,
+    default_display_sleep_command,
+    sleep_display,
 )
 
 
@@ -18,6 +21,33 @@ def test_default_bcnc_command_uses_current_python(monkeypatch):
 def test_configured_bcnc_command_is_used(monkeypatch):
     monkeypatch.setenv("CNC_CONTROLLER_BCNC_COMMAND", "/opt/bcnc/run --fullscreen")
     assert default_bcnc_command() == ["/opt/bcnc/run", "--fullscreen"]
+
+
+def test_default_display_sleep_command_uses_xset(monkeypatch):
+    monkeypatch.delenv("CNC_CONTROLLER_DISPLAY_SLEEP_COMMAND", raising=False)
+    assert default_display_sleep_command() == ["xset", "dpms", "force", "off"]
+
+
+def test_configured_display_sleep_command_is_used(monkeypatch):
+    monkeypatch.setenv(
+        "CNC_CONTROLLER_DISPLAY_SLEEP_COMMAND", "/opt/controller/sleep-display"
+    )
+    assert default_display_sleep_command() == ["/opt/controller/sleep-display"]
+
+
+@patch("cnc_controller.launchers.subprocess.run")
+def test_sleep_display_runs_command(run):
+    sleep_display(["xset", "dpms", "force", "off"])
+    run.assert_called_once_with(["xset", "dpms", "force", "off"], check=True)
+
+
+@patch(
+    "cnc_controller.launchers.subprocess.run",
+    side_effect=FileNotFoundError("xset"),
+)
+def test_sleep_display_reports_launch_failure(_run):
+    with pytest.raises(DisplayControlError, match="Could not put the display to sleep"):
+        sleep_display(["xset", "dpms", "force", "off"])
 
 
 @patch("cnc_controller.launchers.subprocess.Popen")

@@ -1,0 +1,31 @@
+{
+  "presets": [
+    {
+      "material": "Birch plywood",
+      "thickness_mm": 3.0,
+      "operation": "cut",
+      "speed_mm_min": 600.0,
+      "power_percent": 85.0,
+      "passes": 3,
+      "notes": "Conservative starting point only; validate with a test coupon."
+    },
+    {
+      "material": "Birch plywood",
+      "thickness_mm": 3.0,
+      "operation": "line engrave",
+      "speed_mm_min": 1200.0,
+      "power_percent": 40.0,
+      "passes": 1,
+      "notes": "Conservative starting point only; validate with a test coupon."
+    },
+    {
+      "material": "Anodized aluminum",
+      "thickness_mm": 1.0,
+      "operation": "line engrave",
+      "speed_mm_min": 1800.0,
+      "power_percent": 30.0,
+      "passes": 1,
+      "notes": "Marking only; tune for coating and laser module."
+    }
+  ]
+}
