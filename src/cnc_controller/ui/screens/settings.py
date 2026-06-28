@@ -26,6 +26,7 @@ from ..theme import (
     C_GREEN_BORDER,
     C_GREEN_TEXT,
     C_MUTED,
+    C_TEXT,
 )
 from ..widgets.touch_keyboard import TouchKeyboard
 from ..motion import MotionMode
@@ -196,6 +197,8 @@ class SettingsScreen(QWidget):
             self._build_network()
         elif section == "Updates":
             self._build_updates()
+        elif section == "Diagnostics":
+            self._build_diagnostics()
         else:
             self._build_placeholder(section)
 
@@ -389,6 +392,93 @@ class SettingsScreen(QWidget):
         )
         self._content_layout.addWidget(self._check_updates)
         self._refresh_updates()
+
+    def _build_diagnostics(self) -> None:
+        ctrl = self._ctrl
+        worker = ctrl.worker
+        last = getattr(worker, "_last_status", None) if worker is not None else None
+        sim = bool(worker is not None and getattr(worker, "is_simulation", False))
+        target = getattr(worker, "_target_port", None) or ctrl.profile.serial_port
+
+        def _fmt_pos(p):
+            try:
+                return "X %.3f   Y %.3f   Z %.3f" % (p[0], p[1], p[2])
+            except Exception:
+                return "—"
+
+        card = QFrame(self._content)
+        card.setObjectName("card")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(14, 12, 14, 12)
+        cl.setSpacing(9)
+
+        def _row(label_text: str, value_text: str):
+            r = QHBoxLayout()
+            lbl = QLabel(label_text, card)
+            lbl.setStyleSheet("background:transparent;border:none")
+            r.addWidget(lbl)
+            r.addStretch()
+            val = QLabel(value_text, card)
+            val.setStyleSheet(
+                f"color:{C_TEXT};font-weight:600;background:transparent;border:none"
+            )
+            r.addWidget(val)
+            cl.addLayout(r)
+            return val
+
+        state_text = "SIMULATION (mock)" if sim else (last.state if last else "—")
+        self._diag_state = _row("Connection", state_text)
+        self._diag_port = _row("Port", f"{target} · {ctrl.profile.baud_rate}")
+        self._diag_mpos = _row("Machine (MPos)", _fmt_pos(last.mpos) if last else "—")
+        self._diag_wpos = _row("Work (WPos)", _fmt_pos(last.wpos) if last else "—")
+        self._diag_fs = _row(
+            "Feed / Spindle",
+            ("F %.0f   S %.0f" % (last.feed, last.spindle)) if last else "—",
+        )
+        self._content_layout.addWidget(card)
+
+        controls = QHBoxLayout()
+        connect = _button("Connect", "btnPrimary", 46)
+        connect.clicked.connect(ctrl.reconnect_serial)
+        controls.addWidget(connect)
+        disconnect = _button("Disconnect", "btnSecondary", 46)
+        disconnect.clicked.connect(ctrl.disconnect_serial)
+        controls.addWidget(disconnect)
+        self._content_layout.addLayout(controls)
+
+        console = _button("Open GRBL Console  →", "btnSecondary", 50)
+        console.clicked.connect(lambda: ctrl.navigate_to("diagnostics"))
+        self._content_layout.addWidget(console)
+
+        hint = QLabel(
+            "Live machine state. Open the console to send raw GRBL commands, "
+            "read $$ settings, and view alarm history.",
+            self._content,
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{C_DIM};background:transparent;border:none")
+        self._content_layout.addWidget(hint)
+        self._content_layout.addStretch()
+
+    def on_status(self, status) -> None:
+        """Live-update the Diagnostics panel while it is the active section."""
+        if self._active_section != "Diagnostics":
+            return
+        try:
+            if not getattr(self, "_diag_state", None):
+                return
+            if not (self._ctrl.worker and self._ctrl.worker.is_simulation):
+                self._diag_state.setText(status.state)
+            self._diag_mpos.setText(
+                "X %.3f   Y %.3f   Z %.3f" % (status.mpos[0], status.mpos[1], status.mpos[2])
+            )
+            self._diag_wpos.setText(
+                "X %.3f   Y %.3f   Z %.3f" % (status.wpos[0], status.wpos[1], status.wpos[2])
+            )
+            self._diag_fs.setText("F %.0f   S %.0f" % (status.feed, status.spindle))
+        except (RuntimeError, AttributeError):
+            # Section was switched and the labels were torn down between calls.
+            pass
 
     def _build_placeholder(self, section: str) -> None:
         text = QLabel(
