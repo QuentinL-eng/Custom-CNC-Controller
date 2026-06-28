@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
 
         # Status bar (top, 46 px)
-        self.status_bar = StatusBar(central)
+        self.status_bar = StatusBar(central, self.motion)
         root.addWidget(self.status_bar)
 
         # Content row

@@ -491,7 +491,13 @@ class LaserModeScreen(QWidget):
         return page
 
     def _show_page(self, index: int) -> None:
-        self._pages.setCurrentIndex(index)
+        previous = self._pages.currentIndex()
+        page = self._pages.widget(index)
+        self._ctrl.motion.show_page(
+            self._pages,
+            page,
+            direction=1 if index >= previous else -1,
+        )
         for button_index, button in enumerate(self._nav_buttons):
             button.setStyleSheet(
                 f"background:{C_BLUE};color:white;border:1px solid {C_BLUE};"
@@ -734,6 +740,7 @@ class LaserModeScreen(QWidget):
             self._console_status.setText("GRBL connected · laser mode NOT confirmed")
 
     def on_status(self, status: GrblStatus) -> None:
+        state_changed = status.state != self._status.state
         self._status = status
         state = status.state.upper()
         color = status.state_color
@@ -741,6 +748,8 @@ class LaserModeScreen(QWidget):
         self._run_state.setStyleSheet(
             f"font-size:42px;font-weight:700;color:{color};background:transparent;border:none"
         )
+        if state_changed:
+            self._ctrl.motion.pulse(self._run_state)
         feed, rapid, spindle = status.overrides
         self._override.setText(f"Feed {feed}%  ·  Rapid {rapid}%  ·  Power {spindle}%")
         self._console_status.setText(
@@ -755,7 +764,10 @@ class LaserModeScreen(QWidget):
 
     def on_job_progress(self, current: int, total: int) -> None:
         self._line_label.setText(f"Line {current} / {total}")
-        self._progress.setValue(round(current * 100 / total) if total else 0)
+        self._ctrl.motion.animate_value(
+            self._progress,
+            round(current * 100 / total) if total else 0,
+        )
         if self._job_started_at and current:
             elapsed = time.monotonic() - self._job_started_at
             remaining = max(0, elapsed * (total - current) / current)
@@ -763,12 +775,14 @@ class LaserModeScreen(QWidget):
 
     def on_job_finished(self, success: bool) -> None:
         self._elapsed_timer.stop()
-        self._progress.setValue(100 if success else self._progress.value())
+        if success:
+            self._ctrl.motion.animate_value(self._progress, 100)
         self._run_state.setText("COMPLETE" if success else "ALARM")
         self._run_state.setStyleSheet(
             f"font-size:42px;font-weight:700;color:{C_GREEN if success else C_RED};"
             "background:transparent;border:none"
         )
+        self._ctrl.motion.pulse(self._run_state)
 
     def _update_elapsed(self) -> None:
         if self._job_started_at:

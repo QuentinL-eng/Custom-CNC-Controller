@@ -26,8 +26,10 @@ def _sep(parent: QWidget) -> QFrame:
 class StatusBar(QFrame):
     """1024×46 px persistent header bar."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, motion=None):
         super().__init__(parent)
+        self._motion = motion
+        self._last_state = ""
         self.setObjectName("statusBar")
         self.setFixedHeight(STATUS_BAR_H)
         self.setStyleSheet(
@@ -127,6 +129,8 @@ class StatusBar(QFrame):
             )
 
     def set_status(self, status: GrblStatus) -> None:
+        state_changed = status.state != self._last_state
+        self._last_state = status.state
         dot_color = status.state_color
         self._dot.setStyleSheet(
             f"color: {dot_color}; font-size: 10px; background: transparent; border: none;"
@@ -136,6 +140,9 @@ class StatusBar(QFrame):
             self._conn_label.setText("GRBL · Connected")
         else:
             self._conn_label.setText("GRBL · —")
+
+        if state_changed and self._motion is not None:
+            self._motion.pulse(self._state_label)
 
     def set_job_name(self, name: str) -> None:
         self._conn_label.setText(name or "GRBL · Connected")

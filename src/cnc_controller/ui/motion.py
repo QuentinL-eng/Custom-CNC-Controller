@@ -71,8 +71,11 @@ class MotionController(QObject):
         self._config_path = config_path
         self._mode = _load_mode(config_path)
         self._button_animations: dict[QPushButton, QPropertyAnimation] = {}
+        self._property_animations: dict[tuple[int, bytes], QPropertyAnimation] = {}
+        self._pulse_animations: dict[object, QPropertyAnimation] = {}
         self._screen_animation: QPropertyAnimation | None = None
         self._screen_overlay: QLabel | None = None
+        self._screen_page = None
         self._installed = False
 
     @property
@@ -118,6 +121,7 @@ class MotionController(QObject):
         current = self._button_animations.pop(button, None)
         if current:
             current.stop()
+            current.deleteLater()
         effect = button.graphicsEffect()
         if not isinstance(effect, QGraphicsOpacityEffect):
             effect = QGraphicsOpacityEffect(button)
@@ -147,6 +151,71 @@ class MotionController(QObject):
         )
         self._button_animations[button] = animation
         animation.start()
+
+    def animate_value(self, target, value: int) -> None:
+        """Smooth an integer Qt property without queuing stale updates."""
+        if self.duration == 0:
+            target.setValue(value)
+            return
+        key = (id(target), b"value")
+        current = self._property_animations.pop(key, None)
+        if current is not None:
+            current.stop()
+            current.deleteLater()
+        animation = QPropertyAnimation(target, b"value", self)
+        animation.setStartValue(target.value())
+        animation.setEndValue(value)
+        animation.setDuration(self.duration)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        animation.finished.connect(
+            lambda active=animation, animation_key=key: self._finish_property(
+                animation_key, active
+            )
+        )
+        self._property_animations[key] = animation
+        animation.start()
+
+    def _finish_property(
+        self,
+        key: tuple[int, bytes],
+        animation: QPropertyAnimation,
+    ) -> None:
+        if self._property_animations.get(key) is animation:
+            self._property_animations.pop(key, None)
+        animation.deleteLater()
+
+    def pulse(self, target) -> None:
+        """Briefly acknowledge an important state change."""
+        if self.duration == 0:
+            return
+        current = self._pulse_animations.pop(target, None)
+        if current is not None:
+            current.stop()
+            current.deleteLater()
+        effect = target.graphicsEffect()
+        if not isinstance(effect, QGraphicsOpacityEffect):
+            effect = QGraphicsOpacityEffect(target)
+            target.setGraphicsEffect(effect)
+        effect.setOpacity(0.55)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setStartValue(0.55)
+        animation.setEndValue(1.0)
+        animation.setDuration(self.duration)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        animation.finished.connect(
+            lambda item=target, active=animation: self._finish_pulse(
+                item, active
+            )
+        )
+        self._pulse_animations[target] = animation
+        animation.start()
+
+    def _finish_pulse(self, target, animation: QPropertyAnimation) -> None:
+        if self._pulse_animations.get(target) is not animation:
+            return
+        self._pulse_animations.pop(target, None)
+        target.setGraphicsEffect(None)
+        animation.deleteLater()
 
     def _finish_button(
         self,
@@ -199,6 +268,7 @@ class MotionController(QObject):
         animation.setEasingCurve(QEasingCurve.OutCubic)
         animation.finished.connect(self._finish_screen_transition)
         self._screen_overlay = overlay
+        self._screen_page = page
         self._screen_animation = animation
         animation.start()
 
@@ -208,6 +278,10 @@ class MotionController(QObject):
         if animation is not None:
             animation.stop()
             animation.deleteLater()
+        page = self._screen_page
+        self._screen_page = None
+        if page is not None:
+            page.move(0, 0)
         overlay = self._screen_overlay
         self._screen_overlay = None
         if overlay is not None:
