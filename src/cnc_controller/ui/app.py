@@ -355,6 +355,10 @@ def main() -> None:
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
+    if args.fullscreen:
+        # Linux/Qt turns touchscreen taps into mouse clicks. In kiosk mode the
+        # pointer must remain hidden so it cannot flash beneath a finger.
+        QApplication.setOverrideCursor(Qt.BlankCursor)
     app.setApplicationName("CNC·CTRL")
 
     use_mock = args.mock or (args.port is None)

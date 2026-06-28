@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ..qt_compat import (
     Qt,
+    QTimer,
     QEvent,
     QLabel,
     QFrame,
@@ -129,12 +130,15 @@ class SettingsScreen(QWidget):
         self._selected_wifi: WifiNetwork | None = None
         self._build_ui()
         self._keyboard = TouchKeyboard(self)
+        self._keyboard.opened.connect(self._keyboard_opened)
+        self._keyboard.dismissed.connect(self._keyboard_dismissed)
         self._position_keyboard()
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
         root.setSpacing(12)
+        self._root_layout = root
 
         nav = QFrame(self)
         nav.setObjectName("card")
@@ -154,12 +158,19 @@ class SettingsScreen(QWidget):
         nav_layout.addStretch()
         root.addWidget(nav)
 
-        self._content = QFrame(self)
+        self._content_scroll = QScrollArea(self)
+        self._content_scroll.setWidgetResizable(True)
+        self._content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._content_scroll.setStyleSheet(
+            "QScrollArea{background:transparent;border:none}"
+        )
+        self._content = QFrame(self._content_scroll)
         self._content.setObjectName("card")
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(16, 16, 16, 16)
         self._content_layout.setSpacing(12)
-        root.addWidget(self._content, 1)
+        self._content_scroll.setWidget(self._content)
+        root.addWidget(self._content_scroll, 1)
         self._show_section(self._active_section)
 
     def _show_section(self, section: str) -> None:
@@ -524,3 +535,18 @@ class SettingsScreen(QWidget):
                 self.width(),
                 self._keyboard.HEIGHT,
             )
+
+    def _keyboard_opened(self, target: QLineEdit) -> None:
+        # Make the unobstructed area real layout space, then scroll the active
+        # field into it. This prevents the keyboard from covering input text.
+        self._root_layout.setContentsMargins(
+            14, 14, 14, self._keyboard.HEIGHT + 14
+        )
+        QTimer.singleShot(
+            0,
+            lambda: self._content_scroll.ensureWidgetVisible(target, 20, 20),
+        )
+
+    def _keyboard_dismissed(self) -> None:
+        self._root_layout.setContentsMargins(14, 14, 14, 14)
+        self._content_scroll.verticalScrollBar().setValue(0)

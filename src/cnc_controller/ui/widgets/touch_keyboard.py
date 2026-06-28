@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ..qt_compat import (
     Qt,
+    Signal,
     QLabel,
     QFrame,
     QHBoxLayout,
@@ -30,6 +31,8 @@ SYMBOL_ROWS = [
 
 class TouchKeyboard(QFrame):
     HEIGHT = 294
+    opened = Signal(object)
+    dismissed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -135,13 +138,17 @@ class TouchKeyboard(QFrame):
         self.show()
         self.raise_()
         target.setFocus()
+        self.opened.emit(target)
 
     def hide_keyboard(self, clear_target: bool = False) -> None:
+        was_visible = self.isVisible()
         self.hide()
         if self._target:
             self._target.setFocus()
         if clear_target:
             self._target = None
+        if was_visible:
+            self.dismissed.emit()
 
     def _insert(self, value: str) -> None:
         if not self._target:
