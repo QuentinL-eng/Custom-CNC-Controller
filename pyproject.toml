@@ -5,6 +5,7 @@ description = "Touchscreen CNC and laser controller shell for GRBL machines."
 requires-python = ">=3.10"
 dependencies = [
   "pyserial>=3.5",
+  "rayforge @ git+https://github.com/barebaric/rayforge.git@ad6b08bf7911846eaecc8c096e6f414e5068244d ; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
@@ -12,9 +13,6 @@ test = ["pytest>=8"]
 cnc = ["bCNC"]
 # On ARM Linux, install python3-pyqt5 via apt instead
 ui = ["PySide6>=6.5"]
-laser = [
-    "rayforge @ git+https://github.com/barebaric/rayforge.git@ad6b08bf7911846eaecc8c096e6f414e5068244d"
-]
 
 [project.scripts]
 cnc-controller = "cnc_controller.ui.app:main"

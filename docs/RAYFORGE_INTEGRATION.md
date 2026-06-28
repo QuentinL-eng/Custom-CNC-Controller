@@ -27,6 +27,7 @@ Generated lines are never rewritten. They are analyzed exactly as emitted and
 must pass the controller's bounds, unsupported-command, rapid-laser, material,
 and confirmed `$32=1` checks before the sender enables Start.
 
-The `laser` install extra pins Rayforge to the upstream revision validated by
-this controller. The PyPI 1.8.0 wheel declares an incompatible `raygeo` API and
-must not be substituted for the pinned source revision.
+The normal Linux application install pins Rayforge to the upstream revision
+validated by this controller. It is present before the UI starts; tapping the
+Laser tile requires no installation or network access. The PyPI 1.8.0 wheel
+declares an incompatible `raygeo` API and is not used.

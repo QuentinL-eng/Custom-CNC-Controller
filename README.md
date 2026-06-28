@@ -45,7 +45,7 @@ pip install -e .
 
 ```bash
 pip install PySide6 pyserial      # or: sudo apt install python3-pyside2
-pip install -e ".[laser]"
+pip install -e .
 ```
 
 ### ARM32 (ODROID-XU4 / older Pi)
@@ -54,7 +54,7 @@ PySide6 may not have ARM32 wheels. Use PyQt5 instead — the code auto-detects:
 
 ```bash
 sudo apt install python3-pyqt5 python3-serial
-pip install -e ".[laser]"
+pip install -e .
 ```
 
 ## Run
