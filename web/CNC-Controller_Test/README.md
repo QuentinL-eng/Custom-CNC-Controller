@@ -12,3 +12,15 @@ Static, dependency-free test page for `quentinengineering.com/CNC-Controller_Tes
 
 Serve this directory as static files. `index.html`, `styles.css`, and `app.js`
 must remain together.
+
+## XU4 deployment
+
+The production XU4 runs `scripts/xu4-web-sync` every five minutes. The script:
+
+1. Fast-forwards a clean checkout of this repository.
+2. Synchronizes only this directory into
+   `/home/quentin/Quentin-Portfolio/project/CNC-Controller_Test`.
+3. Records the result in
+   `~/.local/state/cnc-controller-web/last-sync.txt`.
+
+The rest of the portfolio checkout is never modified by this sync.

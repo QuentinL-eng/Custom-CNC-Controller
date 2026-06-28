@@ -1,0 +1,75 @@
+#!/bin/sh
+set -eu
+
+repo=${CNC_CONTROLLER_REPO:-/home/quentin/Custom-CNC-Controller}
+web_root=${QUENTIN_PORTFOLIO_ROOT:-/home/quentin/Quentin-Portfolio/project}
+source_dir="$repo/web/CNC-Controller_Test"
+target_dir="$web_root/CNC-Controller_Test"
+state_dir=${XDG_STATE_HOME:-/home/quentin/.local/state}/cnc-controller-web
+state_file="$state_dir/last-sync.txt"
+lock_file="$state_dir/sync.lock"
+
+mkdir -p "$state_dir"
+exec 9>"$lock_file"
+flock -n 9 || exit 0
+
+record() {
+    result=$1
+    commit=$2
+    message=$3
+    checked_at=$(date --iso-8601=seconds)
+    {
+        printf 'result=%s\n' "$result"
+        printf 'commit=%s\n' "$commit"
+        printf 'checked_at=%s\n' "$checked_at"
+        printf 'message=%s\n' "$message"
+    } >"$state_file"
+    printf '%s\n' "$message"
+}
+
+if [ ! -d "$repo/.git" ]; then
+    if ! git clone --quiet --depth 1 \
+        https://github.com/QuentinL-eng/Custom-CNC-Controller.git "$repo"; then
+        record failed unknown "Could not clone the controller repository."
+        exit 1
+    fi
+fi
+
+cd "$repo"
+commit=$(git rev-parse --short HEAD)
+
+if [ -n "$(git status --porcelain)" ]; then
+    record skipped "$commit" "Web sync skipped: controller checkout has local changes."
+    exit 0
+fi
+
+if ! git fetch --quiet origin main; then
+    record failed "$commit" "Web sync failed while contacting GitHub."
+    exit 1
+fi
+
+if ! git merge-base --is-ancestor HEAD origin/main; then
+    record failed "$commit" "Web sync skipped: local and remote branches have diverged."
+    exit 1
+fi
+
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+    git merge --ff-only origin/main
+    commit=$(git rev-parse --short HEAD)
+fi
+
+if [ ! -f "$source_dir/index.html" ]; then
+    record failed "$commit" "Web sync failed: emulator source is missing."
+    exit 1
+fi
+
+mkdir -p "$target_dir"
+rsync --archive --delete --exclude README.md "$source_dir/" "$target_dir/"
+
+if [ -f "$repo/scripts/xu4-web-sync" ]; then
+    mkdir -p /home/quentin/.local/bin
+    install -m 0755 "$repo/scripts/xu4-web-sync" \
+        /home/quentin/.local/bin/xu4-web-sync
+fi
+
+record current "$commit" "CNC Controller test page is current at $commit."
