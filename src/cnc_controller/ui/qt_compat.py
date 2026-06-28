@@ -17,7 +17,8 @@ try:
         QStackedWidget, QSizePolicy, QScrollArea, QProgressBar,
         QFileDialog, QMessageBox, QSplitter, QSpacerItem,
         QButtonGroup, QAbstractButton, QScrollBar,
-        QLineEdit, QPlainTextEdit,
+        QLineEdit, QPlainTextEdit, QGraphicsOpacityEffect,
+        QScroller, QScrollerProperties,
     )
     from PySide6.QtGui import (
         QFont, QColor, QPalette, QPixmap, QPainter, QPen,
@@ -37,7 +38,8 @@ except ImportError:
         QStackedWidget, QSizePolicy, QScrollArea, QProgressBar,
         QFileDialog, QMessageBox, QSplitter, QSpacerItem,
         QButtonGroup, QAbstractButton, QScrollBar,
-        QLineEdit, QPlainTextEdit,
+        QLineEdit, QPlainTextEdit, QGraphicsOpacityEffect,
+        QScroller, QScrollerProperties,
     )
     from PyQt5.QtGui import (  # type: ignore[no-redef]
         QFont, QColor, QPalette, QPixmap, QPainter, QPen,
@@ -56,6 +58,7 @@ __all__ = [
     "QSplitter", "QSpacerItem", "QButtonGroup", "QAbstractButton",
     "QScrollBar", "QFont", "QColor", "QPalette", "QPixmap", "QPainter",
     "QLineEdit", "QPlainTextEdit",
+    "QGraphicsOpacityEffect", "QScroller", "QScrollerProperties",
     "QPen", "QBrush", "QFontMetrics", "QKeyEvent", "QResizeEvent",
     "QIcon", "QFontDatabase", "QCursor", "PYSIDE6",
 ]
