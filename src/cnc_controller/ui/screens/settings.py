@@ -164,6 +164,10 @@ class SettingsScreen(QWidget):
 
         self._content_scroll = QScrollArea(self)
         self._content_scroll.setWidgetResizable(True)
+        # The Wi-Fi SSID/password fields live in this scroll area. Opt out of
+        # kinetic touch scrolling so taps reach those inputs (and pop the
+        # on-screen keyboard) instead of being captured by the scroll gesture.
+        self._content_scroll.setProperty("noKinetic", True)
         self._content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._content_scroll.setStyleSheet(
             "QScrollArea{background:transparent;border:none}"

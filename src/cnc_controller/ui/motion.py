@@ -294,6 +294,11 @@ def enable_kinetic_scrolling(area: QScrollArea) -> None:
     viewport = area.viewport()
     if viewport.property("kineticScrolling"):
         return
+    # Scroll areas that host text inputs opt out via the "noKinetic" property:
+    # QScroller's touch-gesture grab swallows taps on child QLineEdits, so the
+    # field never receives focus and the on-screen keyboard never appears.
+    if area.property("noKinetic"):
+        return
     viewport.setProperty("kineticScrolling", True)
     viewport.setAttribute(Qt.WA_AcceptTouchEvents, True)
     try:

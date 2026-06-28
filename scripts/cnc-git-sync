@@ -31,7 +31,21 @@ if [ -n "$(git status --porcelain)" ]; then
     exit 0
 fi
 
-if ! git fetch --quiet origin main; then
+# Retry the fetch: right after boot the timer can fire before DNS is ready
+# (network-online.target is reached before name resolution actually works),
+# which would otherwise record a spurious "failed" status every cold boot.
+fetch_ok=no
+attempt=1
+while [ "$attempt" -le 5 ]; do
+    if git fetch --quiet origin main; then
+        fetch_ok=yes
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 10
+done
+
+if [ "$fetch_ok" != yes ]; then
     message="Update check failed while contacting GitHub."
     record_status failed "$commit" "$message"
     echo "$message"
