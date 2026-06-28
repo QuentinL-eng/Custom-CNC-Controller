@@ -16,14 +16,17 @@ Rayforge backend ownership, verified against the current upstream source:
 | GRBL communication | `rayforge.machine.driver.grbl`, `rayforge.machine.transport.grbl` |
 | Device settings/profile | `rayforge.machine.models.machine`, `rayforge.machine.device.profile` |
 
-The first integration slice calls Rayforge's importer registry and phase-one
-`scan()` contract to obtain layers, dimensions, warnings, and errors. Existing
-G-code can be validated, framed, reviewed, and streamed without Rayforge.
-Vector/raster jobs remain non-runnable until Rayforge has produced G-code;
-the frontend never substitutes an approximate converter or silently rewrites
-machine code.
+The adapter calls Rayforge's importer registry and phase-one `scan()` contract
+to obtain layers, dimensions, warnings, and errors. During generation it
+constructs a Rayforge `Doc`, attaches the imported payload, maps enabled UI
+layers to `ContourStep` or `EngraveStep`, and runs Rayforge's workpiece, step,
+and job compute stages. The resulting `JobArtifact.machine_code` and runtime
+estimate are returned to the operator workflow.
 
-The next backend slice should construct a Rayforge `Doc`, attach imported
-payload items and laser workflow steps, then consume the pipeline's
-`JobArtifact.encoded_output`. That work stays inside the adapter and does not
-change the touchscreen screens.
+Generated lines are never rewritten. They are analyzed exactly as emitted and
+must pass the controller's bounds, unsupported-command, rapid-laser, material,
+and confirmed `$32=1` checks before the sender enables Start.
+
+The `laser` install extra pins Rayforge to the upstream revision validated by
+this controller. The PyPI 1.8.0 wheel declares an incompatible `raygeo` API and
+must not be substituted for the pinned source revision.

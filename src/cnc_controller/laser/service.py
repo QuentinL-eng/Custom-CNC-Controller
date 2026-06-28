@@ -59,6 +59,29 @@ class LaserApplicationService:
             self.job, self.machine, self.laser_mode_confirmed, preset
         )
 
+    def generate_gcode(self) -> LaserJob:
+        if not self.job:
+            raise ValueError("No laser job is loaded.")
+        if self.job.source_kind == "gcode":
+            return self.job
+        result = self.rayforge.generate(self.job, self.machine)
+        if not result.gcode_lines:
+            raise ValueError("Rayforge returned no G-code.")
+
+        # Analyze exactly what Rayforge emitted. The safety layer receives
+        # these unchanged lines and must approve them before streaming.
+        from ..gcode import analyze_gcode_lines
+
+        analysis = analyze_gcode_lines(result.gcode_lines)
+        if analysis.motion_line_count == 0:
+            raise ValueError("Rayforge G-code contains no XY motion.")
+        self.job.gcode_lines = result.gcode_lines
+        self.job.estimated_seconds = result.estimated_seconds
+        self.job.bounds_mm = analysis.bounds_mm
+        self.job.warnings.extend(result.warnings)
+        self.warning_confirmation = False
+        return self.job
+
     def frame_lines(self) -> list[str]:
         if not self.job or not self.job.bounds_mm:
             raise ValueError("Known job bounds are required for framing.")

@@ -12,6 +12,9 @@ test = ["pytest>=8"]
 cnc = ["bCNC"]
 # On ARM Linux, install python3-pyqt5 via apt instead
 ui = ["PySide6>=6.5"]
+laser = [
+    "rayforge @ git+https://github.com/barebaric/rayforge.git@ad6b08bf7911846eaecc8c096e6f414e5068244d"
+]
 
 [project.scripts]
 cnc-controller = "cnc_controller.ui.app:main"

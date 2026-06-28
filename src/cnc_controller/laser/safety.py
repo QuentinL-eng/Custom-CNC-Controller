@@ -56,6 +56,11 @@ def review_laser_job(
             report.errors.append(f"{layer.name}: power must be between 0% and 100%.")
         if layer.passes < 1:
             report.errors.append(f"{layer.name}: passes must be at least one.")
+        if layer.speed_mm_min > machine.safe_travel_speed_mm_min:
+            report.warnings.append(
+                f"{layer.name}: {layer.speed_mm_min:.0f} mm/min exceeds the "
+                f"machine profile limit ({machine.safe_travel_speed_mm_min:.0f})."
+            )
         if preset:
             if layer.speed_mm_min > preset.speed_mm_min:
                 report.warnings.append(
@@ -74,7 +79,7 @@ def review_laser_job(
                 )
 
     if job.gcode_lines:
-        _review_gcode(job.gcode_lines, report)
+        _review_gcode(job.gcode_lines, machine, report)
     else:
         report.errors.append("Generate G-code before running this job.")
     report.errors = _unique(report.errors)
@@ -82,7 +87,11 @@ def review_laser_job(
     return report
 
 
-def _review_gcode(lines: list[str], report: LaserSafetyReport) -> None:
+def _review_gcode(
+    lines: list[str],
+    machine: LaserMachineConfig,
+    report: LaserSafetyReport,
+) -> None:
     laser_on = False
     power = 0.0
     for line_number, raw in enumerate(lines, 1):
@@ -100,9 +109,19 @@ def _review_gcode(lines: list[str], report: LaserSafetyReport) -> None:
                     laser_on = True
                 elif code == 5:
                     laser_on = False
+            elif letter == "T" and code != 0:
+                report.warnings.append(
+                    f"Line {line_number}: unsupported laser tool T{code}."
+                )
         words = parse_words(clean)
         if "S" in words:
             power = words["S"]
+            s_min, s_max = machine.laser_s_range
+            if power < s_min or power > s_max:
+                report.errors.append(
+                    f"Line {line_number}: S{power:g} is outside the machine "
+                    f"laser range S{s_min}–S{s_max}."
+                )
         if int(words.get("G", -1)) == 0 and laser_on and power > 0:
             report.warnings.append(
                 f"Line {line_number}: laser appears on (S{power:g}) during a G0 rapid move."

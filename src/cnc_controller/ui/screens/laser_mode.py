@@ -25,9 +25,11 @@ from ..qt_compat import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QThread,
     QTimer,
     QVBoxLayout,
     QWidget,
+    Signal,
 )
 from ..theme import (
     C_AMBER,
@@ -106,6 +108,21 @@ class ToolpathCanvas(QFrame):
             min_x, min_y, max_x, max_y = self._bounds
             text = f"{max_x - min_x:.1f} × {max_y - min_y:.1f} mm"
         painter.drawText(self.rect(), Qt.AlignCenter, text)
+
+
+class RayforgeGenerationThread(QThread):
+    generated = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, service: LaserApplicationService, parent=None):
+        super().__init__(parent)
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            self.generated.emit(self._service.generate_gcode())
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class LayerEditor(QFrame):
@@ -214,6 +231,7 @@ class LaserModeScreen(QWidget):
         self._status = GrblStatus()
         self._responses_connected = False
         self._job_started_at: float | None = None
+        self._generation_thread: RayforgeGenerationThread | None = None
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.timeout.connect(self._update_elapsed)
         self._build_ui()
@@ -616,13 +634,45 @@ class LaserModeScreen(QWidget):
                 self, "G-code ready", "The loaded G-code has been validated and is ready for safety review."
             )
             return
-        QMessageBox.warning(
+        if self._generation_thread and self._generation_thread.isRunning():
+            return
+        self._generate_btn.setEnabled(False)
+        self._generate_btn.setText("Generating…")
+        self._review_btn.setEnabled(False)
+        self._generation_thread = RayforgeGenerationThread(
+            self._service, self
+        )
+        self._generation_thread.generated.connect(
+            self._on_generation_complete
+        )
+        self._generation_thread.failed.connect(self._on_generation_failed)
+        self._generation_thread.start()
+
+    def _on_generation_complete(self, job) -> None:
+        self._generate_btn.setEnabled(True)
+        self._generate_btn.setText("G-code Ready")
+        self._review_btn.setEnabled(True)
+        self._canvas.set_bounds(job.bounds_mm)
+        self._refresh_job_summary()
+        estimate = (
+            self._format_time(job.estimated_seconds)
+            if job.estimated_seconds is not None
+            else "unavailable"
+        )
+        QMessageBox.information(
             self,
-            "Rayforge generation required",
-            "The artwork is validated, but no machine code exists yet.\n\n"
-            "Generation must complete through the Rayforge document → workflow → "
-            "pipeline adapter before this job can run. The controller will not "
-            "approximate or silently rewrite the artwork.",
+            "Rayforge generation complete",
+            f"Generated {len(job.gcode_lines or [])} lines.\n"
+            f"Estimated runtime: {estimate}.\n\n"
+            "Run Safety Review before starting.",
+        )
+
+    def _on_generation_failed(self, message: str) -> None:
+        self._generate_btn.setEnabled(True)
+        self._generate_btn.setText("Generate G-code")
+        self._review_btn.setEnabled(True)
+        QMessageBox.critical(
+            self, "Rayforge generation failed", message
         )
 
     def _start(self) -> None:
