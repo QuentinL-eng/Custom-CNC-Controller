@@ -13,6 +13,7 @@ from ..theme import (
     CARD_RADIUS, BTN_RADIUS,
 )
 from ...grbl_worker import GrblStatus
+from ... import history
 
 
 # ---------------------------------------------------------------------------
@@ -245,15 +246,80 @@ class HomeScreen(QWidget):
         sec2.setContentsMargins(0, 0, 0, 10)
         jc_lyt.addWidget(sec2)
 
-        recent = [
-            (C_GREEN, "bracket_v3.nc", "CNC · 29 min · today"),
-            (C_BLUE, "logo_engrave.svg", "Laser · 8 min · yest."),
-            (C_AMBER, "board_top.gbr", "PCB · 41 min · Mon"),
-        ]
-        for color, name, meta in recent:
-            jc_lyt.addWidget(_divider(jobs_card))
-            row = QFrame(jobs_card)
-            row.setStyleSheet("background: transparent; border: none;")
+        # Container that holds the dynamically-built recent-job rows.
+        self._jobs_card = jobs_card
+        self._jobs_rows = QWidget(jobs_card)
+        self._jobs_rows.setStyleSheet("background: transparent; border: none;")
+        self._jobs_rows_lyt = QVBoxLayout(self._jobs_rows)
+        self._jobs_rows_lyt.setContentsMargins(0, 0, 0, 0)
+        self._jobs_rows_lyt.setSpacing(0)
+        jc_lyt.addWidget(self._jobs_rows)
+        jc_lyt.addStretch()
+        self._populate_recent()
+
+        sb_lyt.addWidget(jobs_card, 1)
+        root.addWidget(sidebar, 0)
+
+        # Wire up tile signals
+        self._tile_cnc.clicked.connect(lambda: self._ctrl.navigate_to("cnc_mode"))
+        self._tile_laser.clicked.connect(lambda: self._ctrl.navigate_to("laser_mode"))
+        self._tile_pcb.clicked.connect(lambda: self._ctrl.navigate_to("pcb"))
+        self._small_tiles[0].clicked.connect(lambda: self._ctrl.navigate_to("file_browser"))
+        self._small_tiles[1].clicked.connect(lambda: self._ctrl.navigate_to("probing"))
+        self._small_tiles[2].clicked.connect(lambda: self._ctrl.navigate_to("cnc_mode"))
+        self._small_tiles[3].clicked.connect(lambda: self._ctrl.navigate_to("materials"))
+        self._small_tiles[4].clicked.connect(lambda: self._ctrl.navigate_to("tools"))
+        self._small_tiles[5].clicked.connect(lambda: self._ctrl.navigate_to("settings"))
+
+    # ------------------------------------------------------------------
+    # Recent jobs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _color_for(name: str) -> str:
+        suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if suffix in ("svg", "dxf"):
+            return C_BLUE
+        if suffix in ("gbr", "drl", "ger"):
+            return C_AMBER
+        return C_GREEN
+
+    def _clear_recent_rows(self) -> None:
+        lyt = self._jobs_rows_lyt
+        while lyt.count():
+            item = lyt.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+    def _populate_recent(self) -> None:
+        self._clear_recent_rows()
+        from pathlib import Path
+
+        recent = history.load_recent(limit=3)
+        if not recent:
+            empty = QLabel("No recent jobs", self._jobs_rows)
+            empty.setStyleSheet(
+                f"color: {C_MUTED}; font-size: 13px; background: transparent; border: none;"
+            )
+            empty.setContentsMargins(0, 9, 0, 9)
+            self._jobs_rows_lyt.addWidget(empty)
+            return
+
+        for path_str in recent:
+            p = Path(path_str)
+            name = p.name
+            color = self._color_for(name)
+            self._jobs_rows_lyt.addWidget(_divider(self._jobs_rows))
+
+            row = QPushButton(self._jobs_rows)
+            row.setObjectName("btnTile")
+            row.setStyleSheet(
+                "QPushButton { background: transparent; border: none; text-align: left; }"
+            )
+            row.clicked.connect(lambda _=False, sp=path_str: self._on_recent_clicked(sp))
+
             rl = QHBoxLayout(row)
             rl.setContentsMargins(0, 9, 0, 9)
             rl.setSpacing(10)
@@ -267,25 +333,19 @@ class HomeScreen(QWidget):
             il.setContentsMargins(0, 0, 0, 0)
             il.setSpacing(0)
             il.addWidget(QLabel(name, info))
-            m = QLabel(meta, info)
+            m = QLabel(str(p.parent), info)
             m.setStyleSheet(f"color: {C_DIM}; font-size: 12px; background: transparent; border: none;")
             il.addWidget(m)
             rl.addWidget(info)
-            jc_lyt.addWidget(row)
+            rl.addStretch()
+            self._jobs_rows_lyt.addWidget(row)
 
-        sb_lyt.addWidget(jobs_card, 1)
-        root.addWidget(sidebar, 0)
+    def _on_recent_clicked(self, path_str: str) -> None:
+        from pathlib import Path
 
-        # Wire up tile signals
-        self._tile_cnc.clicked.connect(lambda: self._ctrl.navigate_to("cnc_mode"))
-        self._tile_laser.clicked.connect(lambda: self._ctrl.navigate_to("laser_mode"))
-        self._tile_pcb.clicked.connect(lambda: self._ctrl.navigate_to("pcb"))
-        self._small_tiles[0].clicked.connect(lambda: self._ctrl.navigate_to("file_browser"))
-        self._small_tiles[1].clicked.connect(lambda: self._ctrl.navigate_to("probing"))
-        self._small_tiles[2].clicked.connect(lambda: self._ctrl.navigate_to("cnc_mode"))
-        self._small_tiles[3].clicked.connect(lambda: self._ctrl.navigate_to("file_browser"))
-        self._small_tiles[4].clicked.connect(lambda: self._ctrl.navigate_to("file_browser"))
-        self._small_tiles[5].clicked.connect(lambda: self._ctrl.navigate_to("settings"))
+        self._ctrl.set_job_file(Path(path_str))
+        if self._ctrl.job_file is not None:
+            self._ctrl.navigate_to("file_browser")
 
     def on_status(self, status: GrblStatus) -> None:
         """Update machine panel from GRBL status."""
@@ -308,6 +368,7 @@ class HomeScreen(QWidget):
 
     def on_enter(self) -> None:
         """Called when this screen becomes active."""
+        self._populate_recent()
         self._ctrl.rail.set_enc1("NAV", "menu")
         self._ctrl.rail.set_enc2("—", "idle")
         self._ctrl.rail.ctx_btn.setVisible(False)

@@ -28,11 +28,17 @@ from .screens.file_browser import FileBrowserScreen
 from .screens.probing import ProbingScreen
 from .screens.safety_review import SafetyReviewScreen
 from .screens.settings import SettingsScreen
+from .screens.diagnostics import DiagnosticsScreen
+from .screens.pcb_wizard import PcbWizardScreen
+from .screens.tools import ToolsScreen
+from .screens.materials import MaterialsScreen
 
 from ..grbl_worker import GrblWorker, GrblStatus
 from ..mock_serial import MockSerial
 from ..models import MachineMode, MachineProfile
 from ..jobs import JobFile
+from ..profiles import load_profiles
+from .. import history
 
 
 CONFIG_PATH = Path(__file__).parents[3] / "config" / "machines.json"
@@ -60,6 +66,9 @@ SCREEN_NAMES = [
     "safety_review",
     "settings",
     "pcb",
+    "diagnostics",
+    "tools",
+    "materials",
 ]
 
 
@@ -83,6 +92,16 @@ def _load_profile() -> MachineProfile:
         return _DEFAULT_PROFILE
 
 
+def _load_all_profiles() -> list[MachineProfile]:
+    try:
+        profiles = load_profiles(CONFIG_PATH)
+        if profiles:
+            return profiles
+    except Exception:
+        pass
+    return [_load_profile()]
+
+
 # ---------------------------------------------------------------------------
 # AppController — central hub
 # ---------------------------------------------------------------------------
@@ -100,7 +119,9 @@ class AppController:
     def __init__(self, window: "MainWindow"):
         self._win = window
         self.motion = window.motion
-        self.profile: MachineProfile = _load_profile()
+        self.profiles: list[MachineProfile] = _load_all_profiles()
+        self.active_profile_index: int = 0
+        self.profile: MachineProfile = self.profiles[0]
         self.worker: GrblWorker | None = None
         self.mode: MachineMode = MachineMode.CNC
         self.job_file: JobFile | None = None
@@ -134,6 +155,39 @@ class AppController:
             self.job_file = load_job_file(path)
         except ValueError:
             self.job_file = None
+            return
+        try:
+            history.add_recent(path)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Profile management
+    # ------------------------------------------------------------------
+
+    def set_profile(self, index: int) -> None:
+        if not (0 <= index < len(self.profiles)):
+            return
+        self.active_profile_index = index
+        self.profile = self.profiles[index]
+        if self.worker is not None:
+            # The worker keeps its own reference for jog/safe-Z calculations.
+            self.worker._profile = self.profile
+        self.status_bar.set_profile_name(self.profile.name)
+
+    # ------------------------------------------------------------------
+    # Connection management
+    # ------------------------------------------------------------------
+
+    def reconnect_serial(self) -> None:
+        if self.worker is not None and hasattr(self.worker, "reconnect"):
+            self.worker.reconnect()
+        else:
+            self._win.reinit_serial()
+
+    def disconnect_serial(self) -> None:
+        if self.worker is not None:
+            self.worker.detach_serial()
 
     def connect_worker(self, serial_obj) -> None:
         if self.worker is None:
@@ -143,6 +197,10 @@ class AppController:
             self.worker.job_finished.connect(self._win.on_job_finished)
             self.worker.response_received.connect(self._win.on_response)
             self.worker.error_occurred.connect(self._win.on_error)
+            self.worker.connected.connect(self._win.on_connected)
+            self.worker.disconnected.connect(self._win.on_disconnected)
+            if hasattr(self.worker, "alarm_raised"):
+                self.worker.alarm_raised.connect(self._win.on_alarm)
             self.worker.start()
         self.worker.attach_serial(serial_obj)
 
@@ -165,6 +223,7 @@ class MainWindow(QMainWindow):
         # Optionally hide the OS title bar in fullscreen kiosk mode
         # self.setWindowFlags(Qt.FramelessWindowHint)
 
+        self._reconnect_pending = False
         self._controller = AppController(self)
         self._build_ui()
         self._connect_rail()
@@ -215,9 +274,10 @@ class MainWindow(QMainWindow):
         self._probing = ProbingScreen(ctrl, self._stack)
         self._safety = SafetyReviewScreen(ctrl, self._stack)
         self._settings = SettingsScreen(ctrl, self._stack)
-
-        # Placeholder PCB screen
-        self._pcb = self._make_placeholder("PCB Wizard", "Gerber → toolpath generation coming soon.")
+        self._diag = DiagnosticsScreen(ctrl, self._stack)
+        self._pcb = PcbWizardScreen(ctrl, self._stack)
+        self._tools = ToolsScreen(ctrl, self._stack)
+        self._materials = MaterialsScreen(ctrl, self._stack)
 
         self._screens: dict[str, QWidget] = {
             "splash": self._splash,
@@ -229,10 +289,16 @@ class MainWindow(QMainWindow):
             "safety_review": self._safety,
             "settings": self._settings,
             "pcb": self._pcb,
+            "diagnostics": self._diag,
+            "tools": self._tools,
+            "materials": self._materials,
         }
 
         for screen in self._screens.values():
             self._stack.addWidget(screen)
+
+        # Reflect the active profile in the status bar from the start.
+        self.status_bar.set_profile_name(ctrl.profile.name)
 
     def _make_placeholder(self, title: str, subtitle: str) -> QWidget:
         w = QWidget(self._stack)
@@ -262,6 +328,13 @@ class MainWindow(QMainWindow):
             return
         previous = self._stack.currentWidget()
 
+        # Generic leave hook for the screen we are navigating away from.
+        if previous is not None and previous is not screen and hasattr(previous, "on_leave"):
+            try:
+                previous.on_leave()
+            except Exception:
+                pass
+
         # Hide status bar and rail during splash
         is_splash = name == "splash"
         self.status_bar.setVisible(not is_splash)
@@ -282,23 +355,55 @@ class MainWindow(QMainWindow):
 
     def _init_serial(self, use_mock: bool, port: str | None) -> None:
         self._splash.set_progress(60, "Initialising serial…")
+        self._use_mock = use_mock
+        self._explicit_port = port
 
-        if use_mock:
-            serial_obj = MockSerial()
-            self._splash.set_progress(90, "Using simulated GRBL")
-        else:
-            try:
-                import serial as _serial
-                p = port or self._controller.profile.serial_port
-                serial_obj = _serial.Serial(p, self._controller.profile.baud_rate, timeout=0.05)
-                self._splash.set_progress(90, f"Connected: {p}")
-            except Exception as exc:
-                self._splash.set_progress(75, f"Serial failed, using mock: {exc}")
-                serial_obj = MockSerial()
+        serial_obj = self._open_serial(use_mock, port, on_splash=True)
 
         self._controller.connect_worker(serial_obj)
         self._splash.set_progress(100, "Ready")
         QTimer.singleShot(400, lambda: self.show_screen("home"))
+
+    def _open_serial(self, use_mock: bool, port: str | None, on_splash: bool = False):
+        """Open a serial object, auto-detecting a port when none is given.
+
+        Falls back to a MockSerial when no hardware can be reached.
+        """
+        def _progress(pct: int, msg: str) -> None:
+            if on_splash:
+                self._splash.set_progress(pct, msg)
+
+        if use_mock:
+            _progress(90, "Using simulated GRBL")
+            return MockSerial()
+
+        candidate = port or self._controller.profile.serial_port
+        # When no explicit port was requested, try to auto-detect one.
+        if not port:
+            try:
+                detected = GrblWorker.list_ports()
+            except Exception:
+                detected = []
+            if detected:
+                candidate = detected[0]
+
+        try:
+            import serial as _serial
+            serial_obj = _serial.Serial(
+                candidate, self._controller.profile.baud_rate, timeout=0.05
+            )
+            _progress(90, f"Connected: {candidate}")
+            return serial_obj
+        except Exception as exc:
+            _progress(75, f"Serial failed, using mock: {exc}")
+            return MockSerial()
+
+    def reinit_serial(self) -> None:
+        """Re-open the serial port using the same options as startup."""
+        use_mock = getattr(self, "_use_mock", True)
+        port = getattr(self, "_explicit_port", None)
+        serial_obj = self._open_serial(use_mock, port, on_splash=False)
+        self._controller.connect_worker(serial_obj)
 
     # ------------------------------------------------------------------
     # GRBL signal handlers
@@ -322,10 +427,60 @@ class MainWindow(QMainWindow):
             current.on_job_finished(success)
 
     def on_response(self, line: str) -> None:
-        pass  # Could route to a diagnostics console screen
+        diag = getattr(self, "_diag", None)
+        if diag is not None and hasattr(diag, "append_response"):
+            try:
+                diag.append_response(line)
+            except Exception:
+                pass
 
     def on_error(self, msg: str) -> None:
-        self.status_bar.set_status(GrblStatus(state="Alarm"))
+        # Surface the error text to the user without blocking the GRBL thread.
+        self.status_bar.set_message(f"Error: {msg}")
+        diag = getattr(self, "_diag", None)
+        if diag is not None and hasattr(diag, "append_response"):
+            try:
+                diag.append_response(f"[error] {msg}")
+            except Exception:
+                pass
+
+    def on_alarm(self, msg: str) -> None:
+        """Handle an unsolicited ALARM/error line raised outside a job."""
+        self.status_bar.set_message(f"ALARM: {msg}")
+        diag = getattr(self, "_diag", None)
+        if diag is not None and hasattr(diag, "append_response"):
+            try:
+                diag.append_response(f"[ALARM] {msg}")
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Connection state handlers
+    # ------------------------------------------------------------------
+
+    def on_connected(self) -> None:
+        self._reconnect_pending = False
+        self.status_bar.set_message("GRBL · Connected")
+
+    def on_disconnected(self) -> None:
+        self.status_bar.set_status(GrblStatus(state="Disconnected"))
+        self.status_bar.set_message("GRBL · disconnected")
+        # Schedule a single best-effort auto-reconnect attempt.
+        if not getattr(self, "_reconnect_pending", False):
+            self._reconnect_pending = True
+            QTimer.singleShot(2000, self._auto_reconnect)
+
+    def _auto_reconnect(self) -> None:
+        if not self._reconnect_pending:
+            return
+        self._reconnect_pending = False
+        worker = self._controller.worker
+        if worker is not None and worker.is_connected:
+            return
+        try:
+            self._controller.reconnect_serial()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Keyboard input — maps to physical GPIO actions later

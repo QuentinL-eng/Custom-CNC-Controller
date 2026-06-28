@@ -67,6 +67,15 @@ class StatusBar(QFrame):
         )
         layout.addWidget(self._conn_label)
 
+        layout.addWidget(_sep(self))
+
+        # Active profile label
+        self._profile_label = QLabel("—", self)
+        self._profile_label.setStyleSheet(
+            f"color: {C_MUTED}; font-size: 13px; font-weight: 600; background: transparent; border: none;"
+        )
+        layout.addWidget(self._profile_label)
+
         layout.addStretch()
 
         # Units toggle (display only — clicking handled by app)
@@ -146,6 +155,13 @@ class StatusBar(QFrame):
 
     def set_job_name(self, name: str) -> None:
         self._conn_label.setText(name or "GRBL · Connected")
+
+    def set_profile_name(self, name: str) -> None:
+        self._profile_label.setText(name or "—")
+
+    def set_message(self, text: str) -> None:
+        """Show a transient message in place of the connection label."""
+        self._conn_label.setText(text or "GRBL · —")
 
     def _update_clock(self) -> None:
         self._clock.setText(time.strftime("%H:%M"))

@@ -27,8 +27,12 @@ class MockSerial:
         self._state = "Alarm"
         self._feed = 0.0
         self._spindle = 0.0
+        self._spindle_on = False
         self._laser_mode = False
         self._homed = False
+        self._ov_feed = 100
+        self._ov_rapid = 100
+        self._ov_spindle = 100
         self._sim_thread = threading.Thread(target=self._sim_loop, daemon=True)
         self._sim_thread.start()
 
@@ -52,7 +56,8 @@ class MockSerial:
         return (
             f"<{state}|MPos:{x:.3f},{y:.3f},{z:.3f}"
             f"|WCO:{self._wco[0]:.3f},{self._wco[1]:.3f},{self._wco[2]:.3f}"
-            f"|FS:{self._feed:.0f},{self._spindle:.0f}>\r\n"
+            f"|FS:{self._feed:.0f},{self._spindle:.0f}"
+            f"|Ov:{self._ov_feed},{self._ov_rapid},{self._ov_spindle}>\r\n"
         ).encode()
 
     def _handle(self, cmd: str) -> None:
@@ -128,11 +133,17 @@ class MockSerial:
             )
             return
 
-        # G10 L20 - set WCO
-        m = re.search(r"G10\s+L20\s+P\d+\s+Z([+-]?\d+\.?\d*)", cmd, re.I)
-        if m:
-            probe_z = float(m.group(1))
-            self._wco[2] = self._mpos[2] - probe_z
+        # G10 L20 - set WCO (work zero) for any of X/Y/Z
+        if re.search(r"G10\s+L20\s+P\d+", cmd, re.I):
+            x_m = re.search(r"X([+-]?\d+\.?\d*)", cmd, re.I)
+            y_m = re.search(r"Y([+-]?\d+\.?\d*)", cmd, re.I)
+            z_m = re.search(r"Z([+-]?\d+\.?\d*)", cmd, re.I)
+            if x_m:
+                self._wco[0] = self._mpos[0] - float(x_m.group(1))
+            if y_m:
+                self._wco[1] = self._mpos[1] - float(y_m.group(1))
+            if z_m:
+                self._wco[2] = self._mpos[2] - float(z_m.group(1))
             self._rx.put(b"ok\r\n")
             return
 
@@ -150,25 +161,41 @@ class MockSerial:
             self._rx.put(b"ok\r\n")
             return
 
+        # Spindle on/off (M3/M4/M5), possibly with an S word on the same line
+        m_code = re.search(r"\bM([345])\b", cmd, re.I)
+        if m_code:
+            s_m = re.search(r"S(\d+)", cmd, re.I)
+            if m_code.group(1) in ("3", "4"):
+                self._spindle_on = True
+                if s_m:
+                    self._spindle = float(s_m.group(1))
+            else:  # M5
+                self._spindle_on = False
+                self._spindle = 0.0
+            self._rx.put(b"ok\r\n")
+            return
+
         # Motion (G0/G1)
         m_g = re.search(r"G([01])\b", cmd, re.I)
         if m_g:
+            machine_coords = bool(re.search(r"\bG53\b", cmd, re.I))
             x_m = re.search(r"X([+-]?\d+\.?\d*)", cmd, re.I)
             y_m = re.search(r"Y([+-]?\d+\.?\d*)", cmd, re.I)
             z_m = re.search(r"Z([+-]?\d+\.?\d*)", cmd, re.I)
             f_m = re.search(r"F([+-]?\d+\.?\d*)", cmd, re.I)
+            wco = [0.0, 0.0, 0.0] if machine_coords else self._wco
             if x_m:
-                self._mpos[0] = self._wco[0] + float(x_m.group(1))
+                self._mpos[0] = wco[0] + float(x_m.group(1))
             if y_m:
-                self._mpos[1] = self._wco[1] + float(y_m.group(1))
+                self._mpos[1] = wco[1] + float(y_m.group(1))
             if z_m:
-                self._mpos[2] = self._wco[2] + float(z_m.group(1))
+                self._mpos[2] = wco[2] + float(z_m.group(1))
             if f_m:
                 self._feed = float(f_m.group(1))
             self._rx.put(b"ok\r\n")
             return
 
-        # S command (spindle/laser)
+        # S command (spindle/laser power) on its own line
         if re.match(r"^S\d+$", cmd, re.I):
             self._spindle = float(cmd[1:])
             self._rx.put(b"ok\r\n")
@@ -204,8 +231,13 @@ class MockSerial:
     # -- Serial interface ------------------------------------------------------
 
     def write(self, data: bytes) -> int:
+        # Single-byte real-time commands (including feed-override bytes) have no newline
+        if len(data) == 1 and data[0] in (0x18, 0x90, 0x91, 0x92):
+            self._handle_realtime(data[0])
+            return len(data)
+
         text = data.decode("ascii", errors="replace")
-        # Split by newlines; real-time single-byte commands have no newline
+        # Split by newlines; printable real-time single-byte commands have no newline
         if text in ("\x18", "?", "~", "!"):
             self._handle(text)
         else:
@@ -213,6 +245,17 @@ class MockSerial:
                 if line:
                     self._handle(line)
         return len(data)
+
+    def _handle_realtime(self, byte_val: int) -> None:
+        if byte_val == 0x18:  # soft reset
+            self._state = "Idle"
+            self._rx.put(b"\r\nGrbl 1.1h ['$' for help]\r\n")
+        elif byte_val == 0x90:  # feed override reset to 100%
+            self._ov_feed = 100
+        elif byte_val == 0x91:  # feed override +10%
+            self._ov_feed = min(200, self._ov_feed + 10)
+        elif byte_val == 0x92:  # feed override -10%
+            self._ov_feed = max(10, self._ov_feed - 10)
 
     def readline(self) -> bytes:
         try:

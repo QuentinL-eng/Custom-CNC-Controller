@@ -25,6 +25,20 @@ def check_job_safety(profile: MachineProfile, job: JobSettings, rule: MaterialRu
     if job.passes < 1:
         report.errors.append("Pass count must be at least one.")
 
+    # Plunge / Z-feed verification. JobSettings may not carry a plunge value on
+    # every build, so probe for it gracefully rather than assuming the field.
+    plunge = getattr(job, "plunge_mm_min", None)
+    if plunge is None:
+        plunge = getattr(job, "z_feed_mm_min", None)
+    if plunge is not None:
+        if plunge <= 0:
+            report.errors.append("Plunge (Z) feed must be greater than zero.")
+        elif plunge > max_feed:
+            report.warnings.append(
+                f"Plunge feed {plunge:.0f} mm/min exceeds limit {max_feed:.0f} mm/min."
+            )
+            report.corrections["plunge_mm_min"] = max_feed
+
     if job.bounds_mm is not None:
         min_x, min_y, max_x, max_y = job.bounds_mm
         work_x, work_y, _ = profile.work_area_mm

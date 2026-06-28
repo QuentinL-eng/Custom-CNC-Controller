@@ -13,6 +13,11 @@ from ..theme import (
     CARD_RADIUS, BTN_RADIUS, TOUCH_MIN, TOUCH_PRIMARY,
 )
 from ...grbl_worker import GrblStatus
+from ...models import JobSettings, MachineMode
+from ...safety import check_job_safety
+
+# Default spindle speed used when toggling the spindle on from the UI.
+DEFAULT_SPINDLE_RPM = 10000
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +137,14 @@ class DROPanel(QFrame):
         btn_row.addWidget(zero_all, 1)
         btn_row.addWidget(goto, 1)
         lyt.addLayout(btn_row)
+        lyt.addSpacing(8)
+
+        # Machine zero (G53) — safe-Z lift then rapid to machine X0 Y0
+        mzero = QPushButton("Go to Machine Zero", self)
+        mzero.setObjectName("btnSecondary")
+        mzero.setFixedHeight(48)
+        mzero.clicked.connect(lambda: ctrl.worker and ctrl.worker.goto_machine_zero())
+        lyt.addWidget(mzero)
 
     def update_status(self, status: GrblStatus) -> None:
         wx, wy, wz = status.wpos
@@ -154,6 +167,7 @@ class JogPad(QFrame):
         super().__init__(parent)
         self._ctrl = ctrl
         self._step_idx = 2  # default 1.0 mm
+        self._last_status: GrblStatus | None = None
         self.setObjectName("card")
         self.setFixedWidth(286)
 
@@ -244,6 +258,36 @@ class JogPad(QFrame):
         z_row.addWidget(zdn, 1)
         lyt.addLayout(z_row)
 
+        # Inline jog warning (hidden until a jog is blocked)
+        self._warn_lbl = QLabel("", self)
+        self._warn_lbl.setAlignment(Qt.AlignCenter)
+        self._warn_lbl.setStyleSheet(
+            f"color: {C_AMBER}; font-size: 12px; font-weight: 700; "
+            f"background: transparent; border: none;"
+        )
+        self._warn_lbl.setVisible(False)
+        lyt.addSpacing(6)
+        lyt.addWidget(self._warn_lbl)
+
+    def on_status(self, status: GrblStatus) -> None:
+        self._last_status = status
+        # Clear any stale warning once the machine is in a jog-able state.
+        if status.is_idle and self._warn_lbl.isVisible():
+            self._warn_lbl.setVisible(False)
+
+    def _jog_blocked(self) -> bool:
+        """Refuse to jog when homing is required and the machine is not ready."""
+        if not self._ctrl.profile.homing_required:
+            return False
+        st = self._last_status
+        if st is None:
+            return False
+        return st.is_alarm or not st.is_connected
+
+    def _show_jog_warning(self) -> None:
+        self._warn_lbl.setText("Home / unlock required before jogging")
+        self._warn_lbl.setVisible(True)
+
     def _select_step(self, idx: int) -> None:
         self._step_idx = idx
         for i, btn in enumerate(self._step_btns):
@@ -260,6 +304,9 @@ class JogPad(QFrame):
                 )
 
     def _jog_xy(self, dx: int, dy: int) -> None:
+        if self._jog_blocked():
+            self._show_jog_warning()
+            return
         step = JOG_STEPS[self._step_idx]
         w = self._ctrl.worker
         if not w:
@@ -270,6 +317,9 @@ class JogPad(QFrame):
             w.jog("Y", dy * step, JOG_FEED)
 
     def _jog_z(self, dz: int) -> None:
+        if self._jog_blocked():
+            self._show_jog_warning()
+            return
         step = JOG_STEPS[self._step_idx]
         w = self._ctrl.worker
         if w:
@@ -289,6 +339,7 @@ class JobPanel(QFrame):
         self._ctrl = ctrl
         self._total_lines = 0
         self._job_path: Path | None = None
+        self._spindle_on = False
 
         lyt = QVBoxLayout(self)
         lyt.setContentsMargins(0, 0, 0, 0)
@@ -362,6 +413,12 @@ class JobPanel(QFrame):
         self._hold_btn.clicked.connect(lambda: ctrl.worker and ctrl.worker.feed_hold())
         bot_btn_row.addWidget(self._hold_btn, 1)
 
+        self._resume_btn = QPushButton("Resume", prog_card)
+        self._resume_btn.setObjectName("btnSecondary")
+        self._resume_btn.setFixedHeight(54)
+        self._resume_btn.clicked.connect(lambda: ctrl.worker and ctrl.worker.cycle_start())
+        bot_btn_row.addWidget(self._resume_btn, 1)
+
         self._stop_btn = QPushButton("Stop", prog_card)
         self._stop_btn.setObjectName("btnDanger")
         self._stop_btn.setFixedHeight(54)
@@ -370,6 +427,26 @@ class JobPanel(QFrame):
         bot_btn_row.addWidget(self._stop_btn, 1)
 
         plyt.addLayout(bot_btn_row)
+        plyt.addSpacing(6)
+
+        # Reset + Unlock row. Unlock is shown only while in Alarm.
+        rst_btn_row = QHBoxLayout()
+        rst_btn_row.setSpacing(8)
+
+        self._reset_btn = QPushButton("Reset", prog_card)
+        self._reset_btn.setObjectName("btnSecondary")
+        self._reset_btn.setFixedHeight(50)
+        self._reset_btn.clicked.connect(lambda: ctrl.worker and ctrl.worker.soft_reset())
+        rst_btn_row.addWidget(self._reset_btn, 1)
+
+        self._unlock_btn = QPushButton("Unlock", prog_card)
+        self._unlock_btn.setObjectName("btnWarning")
+        self._unlock_btn.setFixedHeight(50)
+        self._unlock_btn.clicked.connect(lambda: ctrl.worker and ctrl.worker.unlock())
+        self._unlock_btn.setVisible(False)
+        rst_btn_row.addWidget(self._unlock_btn, 1)
+
+        plyt.addLayout(rst_btn_row)
         lyt.addWidget(prog_card)
 
         # Info card
@@ -410,6 +487,29 @@ class JobPanel(QFrame):
         self._feed_row = _kv_row("Feed rate", "—", info_card)
         ilyt.addWidget(self._feed_row)
 
+        # Feed override row: live % readout plus -/reset/+ controls.
+        self._fov_row = _kv_row("Feed override", "100%", info_card)
+        ilyt.addWidget(self._fov_row)
+
+        fov_btn_row = QHBoxLayout()
+        fov_btn_row.setSpacing(8)
+        fov_dn = QPushButton("Feed −", info_card)
+        fov_dn.setObjectName("btnSecondary")
+        fov_dn.setFixedHeight(46)
+        fov_dn.clicked.connect(lambda: ctrl.worker and ctrl.worker.feed_override_down())
+        fov_rst = QPushButton("100%", info_card)
+        fov_rst.setObjectName("btnSecondary")
+        fov_rst.setFixedHeight(46)
+        fov_rst.clicked.connect(lambda: ctrl.worker and ctrl.worker.feed_override_reset())
+        fov_up = QPushButton("Feed +", info_card)
+        fov_up.setObjectName("btnSecondary")
+        fov_up.setFixedHeight(46)
+        fov_up.clicked.connect(lambda: ctrl.worker and ctrl.worker.feed_override_up())
+        fov_btn_row.addWidget(fov_dn, 1)
+        fov_btn_row.addWidget(fov_rst, 1)
+        fov_btn_row.addWidget(fov_up, 1)
+        ilyt.addLayout(fov_btn_row)
+
         self._tool_row = _kv_row("Current tool", "—", info_card)
         ilyt.addWidget(self._tool_row)
 
@@ -422,28 +522,54 @@ class JobPanel(QFrame):
         probe_btn.setObjectName("btnSecondary")
         probe_btn.setFixedHeight(50)
         probe_btn.clicked.connect(lambda: ctrl.navigate_to("probing"))
-        spindle_btn = QPushButton("Spindle ⏻", info_card)
-        spindle_btn.setObjectName("btnSecondary")
-        spindle_btn.setFixedHeight(50)
+        self._spindle_btn = QPushButton("Spindle ⏻", info_card)
+        self._spindle_btn.setObjectName("btnSecondary")
+        self._spindle_btn.setFixedHeight(50)
+        self._spindle_btn.clicked.connect(self._toggle_spindle)
         bot.addWidget(probe_btn, 1)
-        bot.addWidget(spindle_btn, 1)
+        bot.addWidget(self._spindle_btn, 1)
         ilyt.addLayout(bot)
         lyt.addWidget(info_card, 1)
+
+    def _toggle_spindle(self) -> None:
+        w = self._ctrl.worker
+        if not w:
+            return
+        if self._spindle_on:
+            w.spindle_off()
+            self._spindle_on = False
+        else:
+            w.spindle_on(DEFAULT_SPINDLE_RPM)
+            self._spindle_on = True
+        self._refresh_spindle_btn()
+
+    def _refresh_spindle_btn(self) -> None:
+        self._spindle_btn.setText("Spindle ⏼ On" if self._spindle_on else "Spindle ⏻ Off")
 
     def update_status(self, status: GrblStatus) -> None:
         running = status.is_running
         self._hold_btn.setEnabled(running)
+        self._resume_btn.setEnabled(status.is_hold or status.is_idle)
         self._stop_btn.setEnabled(running or status.is_hold)
         self._run_btn.setEnabled(self._job_path is not None and status.is_idle)
         self._load_btn.setEnabled(not running)
 
+        # Unlock is only meaningful while in Alarm.
+        self._unlock_btn.setVisible(status.is_alarm)
+
+        # Track spindle on/off from live status; reflect rpm readout.
+        self._spindle_on = status.spindle > 0
         if status.spindle > 0:
             self._spindle_lbl.setText(f"{status.spindle:.0f} rpm")
         else:
             self._spindle_lbl.setText("Off")
+        self._refresh_spindle_btn()
 
         if status.feed > 0:
             self._feed_row._val.setText(f"{status.feed:.0f} mm/min")
+
+        # Live feed-override percentage from overrides[0].
+        self._fov_row._val.setText(f"{status.overrides[0]}%")
 
     def update_progress(self, current: int, total: int) -> None:
         self._total_lines = total
@@ -470,11 +596,47 @@ class JobPanel(QFrame):
             self._pct_lbl.setText("")
             self._line_lbl.setText("")
             self._run_btn.setEnabled(True)
+            # Keep the controller's job_file in sync so safety/analysis can use it.
+            try:
+                self._ctrl.set_job_file(self._job_path)
+            except Exception:
+                pass
+
+    def _build_job_settings(self, lines: list[str]):
+        """Build JobSettings for the safety check.
+
+        Prefer the controller's analyzed job_file (richer: feed, power, bounds);
+        fall back to a minimal CNC JobSettings derived from the jog feed.
+        """
+        jf = getattr(self._ctrl, "job_file", None)
+        analysis = getattr(jf, "analysis", None) if jf is not None else None
+        if analysis is not None:
+            return JobSettings(
+                mode=getattr(jf, "guessed_mode", MachineMode.CNC),
+                feed_mm_min=analysis.max_feed_mm_min or JOG_FEED,
+                power_s=analysis.max_power_s,
+                source_file=self._job_path,
+                bounds_mm=analysis.bounds_mm,
+            )
+        return JobSettings(
+            mode=MachineMode.CNC,
+            feed_mm_min=JOG_FEED,
+            source_file=self._job_path,
+        )
 
     def _run_job(self) -> None:
         if not self._job_path or not self._ctrl.worker:
             return
         lines = self._job_path.read_text().splitlines()
+
+        # Route through safety before streaming. Any errors (or warnings)
+        # divert to the safety-review screen for confirmation/correction.
+        job_settings = self._build_job_settings(lines)
+        report = check_job_safety(self._ctrl.profile, job_settings)
+        if report.errors or report.warnings:
+            self._ctrl.navigate_to("safety_review")
+            return
+
         self._ctrl.worker.start_job(lines)
         self._run_btn.setEnabled(False)
         self._hold_btn.setEnabled(True)
@@ -489,6 +651,7 @@ class CncModeScreen(QWidget):
     def __init__(self, ctrl, parent: QWidget | None = None):
         super().__init__(parent)
         self._ctrl = ctrl
+        self._last_status: GrblStatus | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -506,8 +669,12 @@ class CncModeScreen(QWidget):
         root.addWidget(self._job, 1)
 
     def on_status(self, status: GrblStatus) -> None:
+        self._last_status = status
         self._dro.update_status(status)
+        self._jog.on_status(status)
         self._job.update_status(status)
+        # Live feed-override on the action rail.
+        self._ctrl.rail.set_enc2("FEED", f"{status.overrides[0]}%")
 
     def on_job_progress(self, current: int, total: int) -> None:
         self._job.update_progress(current, total)
@@ -518,7 +685,8 @@ class CncModeScreen(QWidget):
     def on_enter(self) -> None:
         self._ctrl.status_bar.set_mode(self._ctrl.mode)
         self._ctrl.rail.set_enc1("JOG · X", f"step {self._jog.step_mm():.2f} mm")
-        self._ctrl.rail.set_enc2("FEED", "100%")
+        ov = self._last_status.overrides[0] if self._last_status else 100
+        self._ctrl.rail.set_enc2("FEED", f"{ov}%")
         self._ctrl.rail.ctx_btn.setVisible(True)
 
     def keyPressEvent(self, event) -> None:
@@ -528,17 +696,17 @@ class CncModeScreen(QWidget):
         if not w:
             return
         if k == Qt.Key_Left:
-            w.jog("X", -step, JOG_FEED)
+            self._jog._jog_xy(-1, 0)
         elif k == Qt.Key_Right:
-            w.jog("X", step, JOG_FEED)
+            self._jog._jog_xy(1, 0)
         elif k == Qt.Key_Up:
-            w.jog("Y", step, JOG_FEED)
+            self._jog._jog_xy(0, 1)
         elif k == Qt.Key_Down:
-            w.jog("Y", -step, JOG_FEED)
+            self._jog._jog_xy(0, -1)
         elif k == Qt.Key_PageUp:
-            w.jog("Z", step, JOG_FEED / 2)
+            self._jog._jog_z(1)
         elif k == Qt.Key_PageDown:
-            w.jog("Z", -step, JOG_FEED / 2)
+            self._jog._jog_z(-1)
         elif k == Qt.Key_Space:
             w.cycle_start()
         elif k == Qt.Key_F:

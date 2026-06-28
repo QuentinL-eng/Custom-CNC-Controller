@@ -23,6 +23,7 @@ class MachineProfile:
     homing_required: bool = True
     serial_port: str = "/dev/ttyUSB0"
     baud_rate: int = 115200
+    soft_limits_mm: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True)

@@ -130,6 +130,7 @@ class GrblWorker(QThread):
     connected = Signal()
     disconnected = Signal()
     error_occurred = Signal(str)
+    alarm_raised = Signal(str)         # unsolicited ALARM:/error: when not streaming
 
     def __init__(self, profile: MachineProfile, parent: QObject | None = None):
         super().__init__(parent)
@@ -175,6 +176,54 @@ class GrblWorker(QThread):
         with self._serial_lock:
             return self._serial is not None
 
+    def reconnect(self) -> bool:
+        """Best-effort reopen of the configured serial port. Returns success."""
+        try:
+            import serial  # type: ignore
+        except ImportError:
+            self.error_occurred.emit("pyserial not available")
+            return False
+
+        self.detach_serial()
+        try:
+            ser = serial.Serial(
+                self._profile.serial_port,
+                self._profile.baud_rate,
+                timeout=0.05,
+            )
+        except Exception as exc:  # pragma: no cover - hardware dependent
+            self.error_occurred.emit(f"Reconnect failed: {exc}")
+            return False
+
+        self.attach_serial(ser)
+        return True
+
+    @staticmethod
+    def list_ports() -> list[str]:
+        """Candidate GRBL serial ports, USB-serial hints first. [] if unavailable."""
+        try:
+            from serial.tools import list_ports as _list_ports  # type: ignore
+        except ImportError:
+            return []
+
+        try:
+            ports = list(_list_ports.comports())
+        except Exception:  # pragma: no cover - platform dependent
+            return []
+
+        hints = ("usb", "ch340", "ftdi", "arduino", "cp210", "ttyusb", "ttyacm", "wch")
+
+        def _is_usb(port) -> bool:
+            blob = " ".join(
+                str(getattr(port, attr, "") or "")
+                for attr in ("description", "hwid", "manufacturer", "product", "device")
+            ).lower()
+            return any(h in blob for h in hints)
+
+        preferred = [p.device for p in ports if _is_usb(p)]
+        rest = [p.device for p in ports if not _is_usb(p)]
+        return preferred + rest
+
     def send_realtime(self, byte_val: int | bytes) -> None:
         if isinstance(byte_val, int):
             byte_val = bytes([byte_val])
@@ -207,10 +256,35 @@ class GrblWorker(QThread):
 
     def set_work_zero(self, axes: str = "XYZ") -> None:
         parts = " ".join(f"{a}0" for a in axes.upper() if a in "XYZ")
-        self.send_command(f"G92 {parts}")
+        self.send_command(f"G10 L20 P1 {parts}")
 
     def goto_zero(self) -> None:
+        safe_z = self._profile.safe_z_mm
+        self.send_command(f"G90 G0 Z{safe_z:.3f}")
         self.send_command("G90 G0 X0 Y0")
+
+    def goto_machine_zero(self) -> None:
+        safe_z = self._profile.safe_z_mm
+        self.send_command(f"G90 G0 Z{safe_z:.3f}")
+        self.send_command("G90 G53 G0 X0 Y0")
+
+    def spindle_on(self, rpm: int) -> None:
+        self.send_command(f"M3 S{int(rpm)}")
+
+    def spindle_off(self) -> None:
+        self.send_command("M5")
+
+    def set_spindle_speed(self, rpm: int) -> None:
+        self.send_command(f"S{int(rpm)}")
+
+    def feed_override_reset(self) -> None:
+        self.send_realtime(0x90)
+
+    def feed_override_up(self) -> None:
+        self.send_realtime(0x91)
+
+    def feed_override_down(self) -> None:
+        self.send_realtime(0x92)
 
     def start_job(self, lines: list[str]) -> None:
         clean = [ln for ln in lines if ln.strip() and not ln.strip().startswith(";")]
@@ -330,6 +404,12 @@ class GrblWorker(QThread):
                     self._streaming = False
                     self.job_finished.emit(False)
                     self.error_occurred.emit(f"GRBL error during job: {line}")
+                else:
+                    self.alarm_raised.emit(line)
+            elif line.startswith("ALARM"):
+                self.response_received.emit(line)
+                if not self._streaming:
+                    self.alarm_raised.emit(line)
             else:
                 self.response_received.emit(line)
 
