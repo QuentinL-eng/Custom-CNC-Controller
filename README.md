@@ -1,10 +1,10 @@
 # Custom CNC Controller
 
-Touchscreen-first CNC and laser controller prototype for GRBL machines, targeting a Raspberry Pi 3B with a 7-inch 1024x600 HDMI touchscreen.
+Touchscreen-first CNC and laser controller prototype for GRBL machines, targeting an ODROID-XU4 with a 7-inch 1024x600 HDMI touchscreen.
 
 ## Current scope
 
-This repository is currently an application scaffold, not a finished CNC controller. It can display the 1024x600 touchscreen home screen, load machine profile and material data, analyze basic G-code bounds/feed/power, validate job settings with safety rules, route simulated hardware-control events, and format a small set of GRBL commands through a testable serial facade. It does not yet stream complete jobs, render previews, parse SVG/DXF/Gerber files, or drive Raspberry Pi GPIO controls.
+This repository is currently an application scaffold, not a finished CNC controller. The CNC Mode button launches bCNC, which supplies jogging, probing, work coordinates, G-code preview, and GRBL job sending. The controller also loads machine profile and material data, analyzes G-code bounds/feed/power, validates job settings with safety rules, and routes simulated hardware-control events. It does not yet parse SVG/DXF/Gerber files or drive ODROID GPIO controls.
 
 This repository now contains the first application scaffold for combining:
 
@@ -29,8 +29,14 @@ The planned control surface maps to these actions:
 ## Run the UI shell
 
 ```bash
+sudo apt install python3-tk
+python -m pip install -e ".[cnc]"
 python -m cnc_controller.ui.app
 ```
+
+The default launcher runs `python -m bCNC`. To use a system package, checkout,
+or wrapper script instead, set `CNC_CONTROLLER_BCNC_COMMAND` to the desired
+command before starting the controller.
 
 ## Safety model
 

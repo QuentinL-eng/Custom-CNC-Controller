@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
+from cnc_controller.launchers import ApplicationLaunchError, BcncLauncher
 from cnc_controller.models import MachineMode
 
 
 class TouchControllerApp(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, bcnc_launcher: BcncLauncher | None = None) -> None:
         super().__init__()
+        self.bcnc_launcher = bcnc_launcher or BcncLauncher()
         self.title("Custom CNC Controller")
         self.geometry("1024x600")
         self.configure(bg="#101820")
@@ -20,7 +22,7 @@ class TouchControllerApp(tk.Tk):
         grid = ttk.Frame(self)
         grid.pack(expand=True)
         buttons = [
-            ("CNC Mode", lambda: self._show_mode(MachineMode.CNC)),
+            ("CNC Mode", self._launch_bcnc),
             ("Laser Mode", lambda: self._show_mode(MachineMode.LASER)),
             ("PCB Wizard", lambda: self._show_mode(MachineMode.PCB)),
             ("Files", lambda: self._show_panel("Files")),
@@ -29,6 +31,16 @@ class TouchControllerApp(tk.Tk):
         ]
         for index, (label, command) in enumerate(buttons):
             ttk.Button(grid, text=label, command=command, width=24).grid(row=index // 2, column=index % 2, padx=18, pady=14, ipady=18)
+
+    def _launch_bcnc(self) -> None:
+        try:
+            self.bcnc_launcher.launch()
+        except ApplicationLaunchError as exc:
+            messagebox.showerror(
+                "Unable to start bCNC",
+                f"{exc}\n\nInstall it with:\npython -m pip install bCNC",
+                parent=self,
+            )
 
     def _show_mode(self, mode: MachineMode) -> None:
         self._show_panel(f"{mode.value.upper()} mode")
