@@ -139,7 +139,7 @@ class GrblWorker(QThread):
 
         # Command queues
         self._rt_queue: queue.Queue[bytes] = queue.Queue()   # real-time bytes
-        self._cmd_queue: queue.Queue[str] = queue.Queue()    # normal commands
+        self._cmd_queue: queue.Queue[object] = queue.Queue()  # normal commands/job batches
 
         # Job streaming state (only touched in run() thread)
         self._job_lines: list[str] = []
@@ -214,9 +214,7 @@ class GrblWorker(QThread):
 
     def start_job(self, lines: list[str]) -> None:
         clean = [ln for ln in lines if ln.strip() and not ln.strip().startswith(";")]
-        self._cmd_queue.put(f"__START_JOB__:{len(clean)}")
-        for ln in clean:
-            self._cmd_queue.put(f"__JOB_LINE__:{ln}")
+        self._cmd_queue.put(("__START_JOB__", clean))
 
     def stop_job(self) -> None:
         self._cmd_queue.put("__STOP_JOB__")
@@ -267,18 +265,15 @@ class GrblWorker(QThread):
                     item = None
 
                 if item:
-                    if item.startswith("__START_JOB__:"):
-                        total = int(item.split(":")[1])
-                        self._job_lines = []
+                    if isinstance(item, tuple) and item[0] == "__START_JOB__":
+                        self._job_lines = list(item[1])
                         self._job_index = 0
-                        self._streaming = True
+                        self._streaming = bool(self._job_lines)
                         self._awaiting_ok = False
-                    elif item.startswith("__JOB_LINE__:"):
-                        line = item[len("__JOB_LINE__:"):]
-                        self._job_lines.append(line)
-                        # Send first line immediately when we have it
-                        if self._streaming and not self._awaiting_ok and self._job_index == 0:
+                        if self._streaming:
                             self._send_next_job_line(serial)
+                        else:
+                            self.job_finished.emit(True)
                     elif item == "__STOP_JOB__":
                         self._streaming = False
                         self._awaiting_ok = False

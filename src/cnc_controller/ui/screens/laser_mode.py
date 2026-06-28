@@ -12,6 +12,7 @@ from ..qt_compat import (
     Qt,
     QFileDialog,
     QFrame,
+    QColor,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -91,15 +92,15 @@ class ToolpathCanvas(QFrame):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(C_BORDER, 1))
+        painter.setPen(QPen(QColor(C_BORDER), 1))
         for x in range(20, self.width(), 20):
             painter.drawLine(x, 0, x, self.height())
         for y in range(20, self.height(), 20):
             painter.drawLine(0, y, self.width(), y)
-        painter.setPen(QPen(C_BLUE, 3))
+        painter.setPen(QPen(QColor(C_BLUE), 3))
         margin = 28
         painter.drawRect(margin, margin, max(1, self.width() - 2 * margin), max(1, self.height() - 2 * margin))
-        painter.setPen(QPen(C_MUTED, 1))
+        painter.setPen(QPen(QColor(C_MUTED), 1))
         text = "Load artwork or G-code"
         if self._bounds:
             min_x, min_y, max_x, max_y = self._bounds
@@ -368,6 +369,9 @@ class LaserModeScreen(QWidget):
         self._frame_btn = _button("Frame", height=56)
         self._frame_btn.clicked.connect(self._frame)
         al.addWidget(self._frame_btn)
+        self._generate_btn = _button("Generate G-code", height=56)
+        self._generate_btn.clicked.connect(self._generate)
+        al.addWidget(self._generate_btn)
         self._review_btn = _button("Safety Review", "btnPrimary", 64)
         self._review_btn.clicked.connect(self._review)
         al.addWidget(self._review_btn)
@@ -602,6 +606,25 @@ class LaserModeScreen(QWidget):
         # M5 is included before every frame move.
         self._ctrl.worker.start_job(lines)
 
+    def _generate(self) -> None:
+        job = self._service.job
+        if not job:
+            QMessageBox.warning(self, "No job", "Load a laser file first.")
+            return
+        if job.is_generated:
+            QMessageBox.information(
+                self, "G-code ready", "The loaded G-code has been validated and is ready for safety review."
+            )
+            return
+        QMessageBox.warning(
+            self,
+            "Rayforge generation required",
+            "The artwork is validated, but no machine code exists yet.\n\n"
+            "Generation must complete through the Rayforge document → workflow → "
+            "pipeline adapter before this job can run. The controller will not "
+            "approximate or silently rewrite the artwork.",
+        )
+
     def _start(self) -> None:
         report = self._service.safety_review()
         if not report.ok_to_run or (report.requires_confirmation and not self._service.warning_confirmation):
@@ -721,3 +744,21 @@ class LaserModeScreen(QWidget):
             self._service.laser_mode_confirmed = False
             worker.set_laser_mode(True)
             worker.send_command("$$")
+
+    def keyPressEvent(self, event) -> None:
+        """Keyboard development adapter; GPIO will dispatch the same actions."""
+        key = event.key()
+        if key == Qt.Key_Space:
+            self._start()
+        elif key == Qt.Key_F:
+            self._pause()
+        elif key == Qt.Key_R:
+            self._resume()
+        elif key == Qt.Key_X and self._ctrl.worker:
+            self._ctrl.worker.soft_reset()
+        elif key == Qt.Key_B:
+            self._frame()
+        elif key == Qt.Key_C:
+            self._show_page((self._pages.currentIndex() + 1) % len(self.PAGES))
+        else:
+            super().keyPressEvent(event)

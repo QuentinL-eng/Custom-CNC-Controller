@@ -108,7 +108,9 @@ class MockSerial:
 
         # Settings read
         if cmd == "$$":
-            self._rx.put(b"$0=10\r\n$1=25\r\n$32=0\r\nok\r\n")
+            laser_mode = 1 if self._laser_mode else 0
+            for line in ("$0=10", "$1=25", f"$32={laser_mode}", "ok"):
+                self._rx.put(f"{line}\r\n".encode())
             return
 
         # Jog command
