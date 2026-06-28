@@ -28,6 +28,7 @@ from ..theme import (
     C_MUTED,
 )
 from ..widgets.touch_keyboard import TouchKeyboard
+from ..motion import MotionMode
 from ...network import NetworkManager, NetworkSnapshot, WifiNetwork
 from ...update_status import UpdateManager, UpdateStatus
 
@@ -129,9 +130,12 @@ class SettingsScreen(QWidget):
         self._update_task: UpdateTask | None = None
         self._selected_wifi: WifiNetwork | None = None
         self._build_ui()
-        self._keyboard = TouchKeyboard(self)
+        self._keyboard = TouchKeyboard(self, self._ctrl.motion)
         self._keyboard.opened.connect(self._keyboard_opened)
         self._keyboard.dismissed.connect(self._keyboard_dismissed)
+        self._ctrl.motion.mode_changed.connect(
+            lambda _mode: self._refresh_motion_buttons()
+        )
         self._position_keyboard()
 
     def _build_ui(self) -> None:
@@ -205,10 +209,60 @@ class SettingsScreen(QWidget):
         timeout.addStretch()
         timeout.addWidget(QLabel("Never", self._content))
         self._content_layout.addLayout(timeout)
+
+        motion_card = QFrame(self._content)
+        motion_card.setObjectName("card")
+        motion_layout = QHBoxLayout(motion_card)
+        motion_layout.setContentsMargins(12, 10, 12, 10)
+        motion_text = QVBoxLayout()
+        motion_title = QLabel("Motion", motion_card)
+        motion_title.setStyleSheet(
+            "font-size:15px;font-weight:700;background:transparent;border:none"
+        )
+        motion_note = QLabel("30 FPS · optimized for Raspberry Pi 3B", motion_card)
+        motion_note.setStyleSheet(
+            f"color:{C_MUTED};font-size:12px;background:transparent;border:none"
+        )
+        motion_text.addWidget(motion_title)
+        motion_text.addWidget(motion_note)
+        motion_layout.addLayout(motion_text, 1)
+        self._motion_buttons: dict[MotionMode, QPushButton] = {}
+        for mode, label in (
+            (MotionMode.STANDARD, "Standard"),
+            (MotionMode.REDUCED, "Reduced"),
+            (MotionMode.OFF, "Off"),
+        ):
+            button = _button(label, height=44)
+            button.setFixedWidth(92)
+            button.clicked.connect(
+                lambda _checked=False, selected=mode: self._set_motion_mode(
+                    selected
+                )
+            )
+            self._motion_buttons[mode] = button
+            motion_layout.addWidget(button)
+        self._content_layout.addWidget(motion_card)
+        self._refresh_motion_buttons()
+
         self._content_layout.addStretch()
         sleep = _button("Sleep", height=54)
         sleep.clicked.connect(self._sleep_display)
         self._content_layout.addWidget(sleep)
+
+    def _set_motion_mode(self, mode: MotionMode) -> None:
+        self._ctrl.set_motion_mode(mode)
+        self._refresh_motion_buttons()
+
+    def _refresh_motion_buttons(self) -> None:
+        if not hasattr(self, "_motion_buttons"):
+            return
+        selected = self._ctrl.motion.mode
+        for mode, button in self._motion_buttons.items():
+            button.setObjectName(
+                "btnPrimary" if mode is selected else "btnSecondary"
+            )
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _build_network(self) -> None:
         addresses = QFrame(self._content)

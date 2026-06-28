@@ -4,6 +4,9 @@ from __future__ import annotations
 from ..qt_compat import (
     Qt,
     Signal,
+    QPoint,
+    QPropertyAnimation,
+    QEasingCurve,
     QLabel,
     QFrame,
     QHBoxLayout,
@@ -34,8 +37,10 @@ class TouchKeyboard(QFrame):
     opened = Signal(object)
     dismissed = Signal()
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, motion=None):
         super().__init__(parent)
+        self._motion = motion
+        self._animation: QPropertyAnimation | None = None
         self._target: QLineEdit | None = None
         self._shift = False
         self._symbols = False
@@ -133,22 +138,64 @@ class TouchKeyboard(QFrame):
         return button
 
     def show_for(self, target: QLineEdit, title: str = "Keyboard") -> None:
+        was_visible = self.isVisible()
+        self._stop_animation()
         self._target = target
         self._title.setText(title)
+        final_position = self.pos()
+        if not was_visible and self._duration:
+            self.move(final_position.x(), self.parentWidget().height())
         self.show()
         self.raise_()
         target.setFocus()
         self.opened.emit(target)
+        if not was_visible and self._duration:
+            self._animation = QPropertyAnimation(self, b"pos", self)
+            self._animation.setStartValue(self.pos())
+            self._animation.setEndValue(final_position)
+            self._animation.setDuration(self._duration)
+            self._animation.setEasingCurve(QEasingCurve.OutCubic)
+            self._animation.start()
 
     def hide_keyboard(self, clear_target: bool = False) -> None:
-        was_visible = self.isVisible()
+        if not self.isVisible():
+            if clear_target:
+                self._target = None
+            return
+        self._stop_animation()
+        if clear_target or not self._duration:
+            self._complete_hide(clear_target)
+            return
+        self._animation = QPropertyAnimation(self, b"pos", self)
+        self._animation.setStartValue(self.pos())
+        self._animation.setEndValue(
+            QPoint(self.x(), self.parentWidget().height())
+        )
+        self._animation.setDuration(self._duration)
+        self._animation.setEasingCurve(QEasingCurve.InCubic)
+        self._animation.finished.connect(
+            lambda: self._complete_hide(clear_target)
+        )
+        self._animation.start()
+
+    @property
+    def _duration(self) -> int:
+        return getattr(self._motion, "duration", 0)
+
+    def _stop_animation(self) -> None:
+        if self._animation is not None:
+            self._animation.stop()
+            self._animation.deleteLater()
+            self._animation = None
+
+    def _complete_hide(self, clear_target: bool) -> None:
+        self._stop_animation()
         self.hide()
-        if self._target:
+        if self._target and not clear_target:
             self._target.setFocus()
         if clear_target:
             self._target = None
-        if was_visible:
-            self.dismissed.emit()
+        self.dismissed.emit()
 
     def _insert(self, value: str) -> None:
         if not self._target:

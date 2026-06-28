@@ -17,6 +17,7 @@ from .qt_compat import (
     QStackedWidget, QApplication, QMainWindow, QSizePolicy, QKeyEvent,
 )
 from .theme import STYLESHEET, STATUS_BAR_H, ACTION_RAIL_W
+from .motion import MotionController, MotionMode
 from .widgets.status_bar import StatusBar
 from .widgets.action_rail import ActionRail
 from .screens.splash import SplashScreen
@@ -98,6 +99,7 @@ class AppController:
 
     def __init__(self, window: "MainWindow"):
         self._win = window
+        self.motion = window.motion
         self.profile: MachineProfile = _load_profile()
         self.worker: GrblWorker | None = None
         self.mode: MachineMode = MachineMode.CNC
@@ -116,12 +118,15 @@ class AppController:
         if screen not in SCREEN_NAMES:
             return
         self._nav_stack.append(screen)
-        self._win.show_screen(screen)
+        self._win.show_screen(screen, direction=1)
 
     def navigate_back(self) -> None:
         if len(self._nav_stack) > 1:
             self._nav_stack.pop()
-        self._win.show_screen(self._nav_stack[-1])
+        self._win.show_screen(self._nav_stack[-1], direction=-1)
+
+    def set_motion_mode(self, mode: MotionMode | str) -> None:
+        self.motion.set_mode(mode)
 
     def set_job_file(self, path: Path) -> None:
         from ..jobs import load_job_file
@@ -152,6 +157,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CNC·CTRL")
         self.setFixedSize(1024, 600)
         self.setStyleSheet(STYLESHEET)
+        self.motion = MotionController(self)
+        application = QApplication.instance()
+        if application is not None:
+            self.motion.install(application)
 
         # Optionally hide the OS title bar in fullscreen kiosk mode
         # self.setWindowFlags(Qt.FramelessWindowHint)
@@ -247,16 +256,22 @@ class MainWindow(QMainWindow):
     # Screen navigation
     # ------------------------------------------------------------------
 
-    def show_screen(self, name: str) -> None:
+    def show_screen(self, name: str, direction: int = 1) -> None:
         screen = self._screens.get(name)
         if screen is None:
             return
-        self._stack.setCurrentWidget(screen)
+        previous = self._stack.currentWidget()
 
         # Hide status bar and rail during splash
         is_splash = name == "splash"
         self.status_bar.setVisible(not is_splash)
         self.rail.setVisible(not is_splash)
+        self.motion.show_page(
+            self._stack,
+            screen,
+            direction=direction,
+            animate=not is_splash and previous is not self._splash,
+        )
 
         if hasattr(screen, "on_enter"):
             screen.on_enter()
